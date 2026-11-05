@@ -193,6 +193,18 @@ class JudgeTests(unittest.TestCase):
         after_emoji = CONTEXT + [("S", "lol \U0001F480"), ("amy", "ok")]
         self.assertEqual(asyncio.run(judge.chat("S", "x", after_emoji, "amy")), "nah you cooked")
 
+    def test_chat_cleans_real_replies_from_discord(self):
+        cases = (
+            ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "lol, just trying to keep the vibe interesting"),
+            ("alright, i'll zip it. \U0001F644", "alright, i'll zip it \U0001F644"),
+            ("that's crazy, who asked?", "that's crazy, who asked?"),  # too short to be a tacked-on question
+            ("bro, why?", "bro, why?"),
+            ("why would anyone care about that?", "why would anyone care about that?"),
+        )
+        for raw, expected in cases:
+            judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
+            self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), expected, raw)
+
     def test_chat_cuts_opening_echo_question(self):
         for raw, expected in (
             ("yianni? the self-proclaimed genius", "the self-proclaimed genius"),
