@@ -187,9 +187,20 @@ class JudgeTests(unittest.TestCase):
             judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
             self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), expected)
 
-    def test_chat_keeps_at_most_two_emojis(self):
-        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("nah \U0001F62D\U0001F62D\U0001F62D you cooked \U0001F44D\U0001F3FD"))
-        self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "nah \U0001F62D\U0001F62D you cooked")
+    def test_chat_keeps_one_emoji_and_none_twice_in_a_row(self):
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("nah \U0001F62D\U0001F62D you cooked \U0001F44D\U0001F3FD"))
+        self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "nah \U0001F62D you cooked")
+        after_emoji = CONTEXT + [("S", "lol \U0001F480"), ("amy", "ok")]
+        self.assertEqual(asyncio.run(judge.chat("S", "x", after_emoji, "amy")), "nah you cooked")
+
+    def test_chat_cuts_opening_echo_question(self):
+        for raw, expected in (
+            ("yianni? the self-proclaimed genius", "the self-proclaimed genius"),
+            ("next level? more like next meme", "more like next meme"),
+            ("what do you even mean by that?", "what do you even mean by that?"),
+        ):
+            judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
+            self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), expected)
 
     def test_make_judge_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
