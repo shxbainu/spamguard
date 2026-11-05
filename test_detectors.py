@@ -182,6 +182,11 @@ class JudgeTests(unittest.TestCase):
             ("user", "amy: deadass"),
         ])
 
+    def test_chat_drops_final_period_but_keeps_ellipsis(self):
+        for raw, expected in (("yo.", "yo"), ("bro what...", "bro what..."), ("u.s. is mid", "u.s. is mid")):
+            judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
+            self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), expected)
+
     def test_chat_keeps_only_first_emoji(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("you the real deal \U0001F525 keep it lit \U0001F525\U0001F4AF \U0001F44D\U0001F3FD"))
         self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "you the real deal \U0001F525 keep it lit")
