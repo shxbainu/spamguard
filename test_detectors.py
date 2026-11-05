@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from detectors import GifSpamDetector, MsgRef, RepeatDetector, StrikeTracker, looks_like_gif
-from judge import ConversationJudge
+from judge import ClaudeJudge, GeminiJudge, make_judge
 
 
 def ref(n: int) -> MsgRef:
@@ -98,23 +98,50 @@ class FakeMessages:
         )
 
 
-class JudgeTests(unittest.TestCase):
-    def run_judge(self, messages):
-        judge = ConversationJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
-        return asyncio.run(judge.judge("dave", [("amy", "who's playing tonight?")], "asdkjhasd"))
+class FakeGemini:
+    def __init__(self, text):
+        self.text = text
+        self.last_kwargs = None
+        self.aio = SimpleNamespace(models=self)
 
-    def test_parses_verdict_and_sends_context(self):
+    async def generate_content(self, **kwargs):
+        self.last_kwargs = kwargs
+        return SimpleNamespace(text=self.text)
+
+
+CONTEXT = [("amy", "who's playing tonight?")]
+
+
+class JudgeTests(unittest.TestCase):
+    def test_claude_parses_verdict_and_sends_context(self):
         messages = FakeMessages({"verdict": "low_effort", "reason": "keyboard mash"})
-        verdict = self.run_judge(messages)
+        judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
+        verdict = asyncio.run(judge.judge("dave", CONTEXT, "asdkjhasd"))
         self.assertFalse(verdict.ok)
         self.assertEqual(verdict.reason, "keyboard mash")
         prompt = messages.last_kwargs["messages"][0]["content"]
         self.assertIn("amy: who's playing tonight?", prompt)
         self.assertIn("asdkjhasd", prompt)
-        self.assertEqual(messages.last_kwargs["model"], "claude-haiku-5-5")
 
-    def test_refusal_gives_no_verdict(self):
-        self.assertIsNone(self.run_judge(FakeMessages({}, stop_reason="refusal")))
+    def test_claude_refusal_gives_no_verdict(self):
+        judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=FakeMessages({}, stop_reason="refusal")))
+        self.assertIsNone(asyncio.run(judge.judge("dave", CONTEXT, "hi")))
+
+    def test_gemini_parses_verdict_and_sends_context(self):
+        fake = FakeGemini(json.dumps({"verdict": "disruptive", "reason": "baiting"}))
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=fake)
+        verdict = asyncio.run(judge.judge("dave", CONTEXT, "ur all idiots lol"))
+        self.assertEqual(verdict.verdict, "disruptive")
+        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"])
+        self.assertEqual(fake.last_kwargs["config"].response_mime_type, "application/json")
+
+    def test_gemini_garbage_answer_gives_no_verdict(self):
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("not json"))
+        self.assertIsNone(asyncio.run(judge.judge("dave", CONTEXT, "hi")))
+
+    def test_make_judge_rejects_unknown_provider(self):
+        with self.assertRaises(ValueError):
+            make_judge("openai")
 
 
 if __name__ == "__main__":

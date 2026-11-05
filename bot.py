@@ -16,7 +16,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from detectors import GifSpamDetector, MsgRef, RepeatDetector, StrikeTracker, looks_like_gif
-from judge import ConversationJudge
+from judge import make_judge
 
 load_dotenv()
 
@@ -50,7 +50,8 @@ REPEAT_LIMIT = env_int("REPEAT_LIMIT", 3)
 REPEAT_WINDOW_SECONDS = env_int("REPEAT_WINDOW_SECONDS", 120)
 
 AI_ENABLED = env_bool("AI_ENABLED", True)
-AI_MODEL = os.getenv("AI_MODEL", "claude-haiku-5-5")
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()  # "gemini" (free tier) or "claude"
+AI_MODEL = os.getenv("AI_MODEL", "").strip() or None  # empty = provider default
 AI_STRIKES = env_int("AI_STRIKES", 3)
 AI_STRIKE_WINDOW_SECONDS = env_int("AI_STRIKE_WINDOW_SECONDS", 600)
 CONTEXT_MESSAGES = env_int("CONTEXT_MESSAGES", 15)
@@ -72,7 +73,7 @@ class SpamGuard(discord.Client):
         self.gifs = GifSpamDetector(GIF_LIMIT, GIF_WINDOW_SECONDS)
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
-        self.judge = ConversationJudge(AI_MODEL) if AI_ENABLED else None
+        self.judge = make_judge(AI_PROVIDER, AI_MODEL) if AI_ENABLED else None
 
         # Recent messages per channel, used as context for the AI judge.
         self.history: dict[int, deque[tuple[str, str]]] = defaultdict(lambda: deque(maxlen=CONTEXT_MESSAGES))
@@ -105,7 +106,8 @@ class SpamGuard(discord.Client):
             await self.tree.sync()  # global; can take a while to show up
 
     async def on_ready(self) -> None:
-        log.info("Logged in as %s, watching %d user(s), action=%s", self.user, len(self.watched), ACTION)
+        ai = f"{AI_PROVIDER} ({self.judge.model})" if self.judge else "off"
+        log.info("Logged in as %s, watching %d user(s), action=%s, AI=%s", self.user, len(self.watched), ACTION, ai)
 
     # ---- detection ---------------------------------------------------------
 
@@ -292,8 +294,11 @@ async def pardon_cmd(interaction: discord.Interaction, user: discord.Member) -> 
 def main() -> None:
     if not TOKEN:
         raise SystemExit("Set DISCORD_TOKEN in .env (see .env.example)")
-    if AI_ENABLED and not os.getenv("ANTHROPIC_API_KEY"):
-        raise SystemExit("Set ANTHROPIC_API_KEY in .env, or AI_ENABLED=false to run without the AI check")
+    key_name = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}.get(AI_PROVIDER)
+    if AI_ENABLED and key_name is None:
+        raise SystemExit("AI_PROVIDER must be 'gemini' or 'claude'")
+    if AI_ENABLED and not os.getenv(key_name):
+        raise SystemExit(f"Set {key_name} in .env, or AI_ENABLED=false to run without the AI check")
     if ACTION not in ("timeout", "kick"):
         raise SystemExit("ACTION must be 'timeout' or 'kick'")
     SpamGuard().run(TOKEN, root_logger=True)

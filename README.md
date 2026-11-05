@@ -4,7 +4,7 @@ A Discord bot that watches specific users and puts them in a 3-minute timeout wh
 
 - **Spam GIFs**: 4+ GIFs or stickers within 60 seconds (Tenor/Giphy links, `.gif` uploads, gifv embeds)
 - **Repeat themselves**: 3+ near-identical messages within 2 minutes (catches "BRO LOOK" / "bro look!!" / "bro look!!!")
-- **Don't add anything**: each message is judged by Claude Haiku against the recent chat. Three "not contributing" verdicts within 10 minutes means a timeout. Haiku is very cheap, about $0.0001 per message checked.
+- **Don't add anything**: an AI reads each of their messages alongside the recent chat and decides whether it contributes. Three "not contributing" verdicts within 10 minutes means a timeout. By default this uses Google Gemini's **free tier**; Claude Haiku is a paid option (about $1 per 10,000 messages).
 
 Every number above can be changed in `.env`.
 
@@ -32,9 +32,14 @@ You asked for "kick for 3 minutes, then add them back". Discord doesn't let a bo
 5. Open the generated URL and add the bot to your server.
 6. In **Server Settings → Roles**, drag the bot's role **above** the role of anyone it should punish. Discord won't let a bot time out the server owner, admins, or anyone with a higher role.
 
-### 2. Get a Claude API key
+### 2. Get a free Gemini API key
 
-Create one at [console.anthropic.com](https://console.anthropic.com/settings/keys). To skip the AI check entirely, set `AI_ENABLED=false`; GIF and repeat detection still work.
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
+2. Click **Create API key** and copy it. No credit card needed.
+
+The free tier has a daily request limit, which is far more than one watched user will hit. If it's ever reached, the bot skips the AI check until the limit resets; GIF and repeat detection keep working. Note that Google may use free-tier requests to improve its products, so the watched user's messages and the recent chat get sent to Google.
+
+**Alternatives:** set `AI_PROVIDER=claude` and `ANTHROPIC_API_KEY` to use Claude Haiku instead (paid API credit; a Claude Pro subscription doesn't cover it). Or set `AI_ENABLED=false` to skip the AI check entirely.
 
 ### 3. Configure and run
 
@@ -47,7 +52,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env`: paste your `DISCORD_TOKEN` and `ANTHROPIC_API_KEY`, and put the user ID to watch in `TARGET_USER_IDS`. To copy an ID, turn on **Settings → Advanced → Developer Mode**, then right-click the user and choose **Copy User ID**. Then:
+Edit `.env`: paste your `DISCORD_TOKEN` and `GEMINI_API_KEY`, and put the user ID to watch in `TARGET_USER_IDS`. To copy an ID, turn on **Settings → Advanced → Developer Mode**, then right-click the user and choose **Copy User ID**. Then:
 
 ```bash
 python bot.py
@@ -68,9 +73,25 @@ Only people with the **Timeout Members** permission can use these.
 
 Set `GUILD_ID` in `.env` so the commands show up right away. Without it, Discord can take a while to show them.
 
+## How the AI decides
+
+For every message from a watched user (skipping GIFs, which the GIF check handles), the bot sends the AI:
+
+1. Its instructions (`SYSTEM_PROMPT` in [`judge.py`](judge.py)).
+2. The last 15 messages in that channel from everyone, for context.
+3. The new message.
+
+The AI must answer in a fixed JSON format with one of three verdicts plus a short reason:
+
+- `ok`: normal chat, jokes, short replies, genuine questions.
+- `low_effort`: gibberish, keyboard mashing, emoji spam, or a random question or remark that ignores what everyone's talking about.
+- `disruptive`: trolling, baiting, or deliberately derailing.
+
+Anything other than `ok` is a strike. One strike does nothing on its own; 3 strikes within 10 minutes triggers the timeout. That way a single misjudged message never gets anyone punished. If the AI can't be reached or gives a malformed answer, the message is skipped rather than counted.
+
 ## Tuning the AI
 
-The rules Claude follows are in `SYSTEM_PROMPT` in [`judge.py`](judge.py). By default it's lenient: jokes, banter and short replies like "lol" are fine, and only gibberish, random non-sequiturs, trolling and derailing count as strikes. Each strike is logged to the console with the reason, so watch the first few hours. If it's too soft or too harsh, edit the prompt or change `AI_STRIKES`.
+Edit `SYSTEM_PROMPT` in [`judge.py`](judge.py) to change what counts as noise. By default it's lenient: jokes, banter and short replies like "lol" are fine, and only gibberish, random non-sequiturs, trolling and derailing count as strikes. Each strike is logged to the console with the reason, so watch the first few hours. If it's too soft or too harsh, edit the prompt or change `AI_STRIKES`.
 
 ## Tests
 
@@ -82,4 +103,4 @@ python -m unittest -v
 
 - `bot.py`: Discord events, punishment, slash commands
 - `detectors.py`: GIF, repeat and strike logic (no Discord code, so it's unit tested)
-- `judge.py`: the Claude Haiku "is this contributing?" check
+- `judge.py`: the AI "is this contributing?" check (Gemini or Claude)
