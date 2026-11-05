@@ -133,7 +133,7 @@ class JudgeTests(unittest.TestCase):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=fake)
         verdict = asyncio.run(judge.judge("dave", CONTEXT, "ur all idiots lol"))
         self.assertEqual(verdict.verdict, "disruptive")
-        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"])
+        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"][0]["parts"][0]["text"])
         self.assertEqual(fake.last_kwargs["config"].response_mime_type, "application/json")
 
     def test_gemini_garbage_answer_gives_no_verdict(self):
@@ -171,12 +171,16 @@ class JudgeTests(unittest.TestCase):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("keep that energy high\u2014you're the best \u2013 fr"))
         self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "keep that energy high, you're the best, fr")
 
-    def test_chat_marks_own_replies_as_you(self):
+    def test_chat_sends_real_turns(self):
         fake = FakeGemini("fair")
-        history = [("amy", "yianni is a dictator"), ("Spreader", "kim john-un strikes again"), ("amy", "deadass")]
+        history = [("amy", "yianni is a dictator"), ("bob", "fr"), ("Spreader", "kim john-un strikes again"), ("amy", "deadass")]
         asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).chat("Spreader", "x", history, "amy"))
-        self.assertIn("you: kim john-un strikes again", fake.last_kwargs["contents"])
-        self.assertNotIn("Spreader: kim", fake.last_kwargs["contents"])
+        turns = [(c["role"], c["parts"][0]["text"]) for c in fake.last_kwargs["contents"]]
+        self.assertEqual(turns, [
+            ("user", "amy: yianni is a dictator\nbob: fr"),
+            ("model", "kim john-un strikes again"),
+            ("user", "amy: deadass"),
+        ])
 
     def test_chat_keeps_only_first_emoji(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("you the real deal \U0001F525 keep it lit \U0001F525\U0001F4AF \U0001F44D\U0001F3FD"))
@@ -216,6 +220,13 @@ def groq_judge(completions, model="openai/gpt-oss-120b"):
     return OpenAICompatibleJudge("groq", model, client=SimpleNamespace(chat=SimpleNamespace(completions=completions)))
 
 
+class ChatTurnTests(unittest.TestCase):
+    def test_starts_and_ends_with_user(self):
+        from judge import build_chat_turns
+        self.assertEqual(build_chat_turns([("Spreader", "yo")], "Spreader"),
+                         [("user", "(earlier messages not shown)"), ("assistant", "yo"), ("user", "(your turn)")])
+
+
 class OpenAICompatibleTests(unittest.TestCase):
     def test_verdict_uses_json_schema(self):
         fake = FakeCompletions(json.dumps({"verdict": "low_effort", "reason": "mash"}))
@@ -230,7 +241,7 @@ class OpenAICompatibleTests(unittest.TestCase):
         reply = asyncio.run(groq_judge(fake).chat("Spreader", "a gremlin", CONTEXT + [("dave", "roast me")], "dave"))
         self.assertEqual(reply, "skill issue tbh")
         self.assertNotIn("response_format", fake.last_kwargs)
-        self.assertIn("Reply to dave's last message", fake.last_kwargs["messages"][1]["content"])
+        self.assertEqual(fake.last_kwargs["messages"][-1], {"role": "user", "content": "amy: who's playing tonight?\ndave: roast me"})
 
     def test_rate_limit_gives_none(self):
         fake = FakeCompletions(error=rate_limit(retry_after="60"))
@@ -260,7 +271,7 @@ class StubJudge(Judge):  # canned answer
         self.answer = answer
         self.calls = 0
 
-    async def complete(self, system, prompt, schema, max_tokens):
+    async def send(self, system, turns, schema, max_tokens):
         self.calls += 1
         return self.answer
 

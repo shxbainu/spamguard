@@ -57,13 +57,15 @@ Each job can use a different AI, and each provider has its own free allowance, s
 |---|---|---|---|
 | Spam and "not contributing" checks | `AI_PROVIDER` / `AI_MODEL` | Gemini Flash-Lite | Many small, simple checks |
 | `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b`, then Gemini | The best free reasoning model |
-| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-20b`, then `qwen/qwen3.8-27b`, then Gemini | Fastest stable free model; a separate model from settling, so it has its own daily limit |
+| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | The most coherent free model; smaller ones force jokes that don't make sense |
 
 Providers: `gemini`, `groq`, `openrouter` (free models, but only 50 requests a day unless you've bought $10 of credit) and `claude` (paid). If a provider's key is missing, the feature that needs it turns off and the bot logs a warning; the rest keeps working.
 
 **Backup models:** each `*_MODEL` setting can be a comma-separated list. The bot tries the models in order and uses the first that answers, so when one is busy ("over capacity"), rate-limited or down, the next one takes over. Prefix an entry with `provider:` to use a different provider, e.g. `CHAT_MODEL=openai/gpt-oss-20b,qwen/qwen3.8-27b,gemini:gemini-3.5-flash-lite`. Each request gives up after 15 seconds. Models whose provider has no API key in `.env` are skipped.
 
-For the chat, put the model you like best first. Qwen (`qwen/qwen3.8-27b`) plays personalities better than gpt-oss-20b, but it's a Groq "preview" model and is sometimes over capacity.
+For the chat, put the model you like best first. Bigger models hold a conversation much better: gpt-oss-20b is fast but tends to make forced comebacks that don't quite make sense. Chat and `/settleargument` both use gpt-oss-120b by default, so they share its 1,000-requests-a-day free limit.
+
+The chat history is sent to the AI as a real back-and-forth conversation (its own earlier replies as its turns), which helps it follow what's going on. Keep `PERSONA` about who the bot is and how it feels about people; the bot's built-in chat rules already handle the casual texting style, and stacking extra style rules, slang lists or catchphrases in the personality makes it overact.
 
 ## Punishment ladder
 
