@@ -158,6 +158,13 @@ class SpamGuard(discord.Client):
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
         log.info("Logged in as %s. Punishments: %s", self.user, ladder)
         log.info("AI: moderation=%s, settle=%s, chat=%s", describe(self.judge), describe(self.settler), describe(self.chatter))
+        if PERSONA == DEFAULT_PERSONA:
+            log.warning(
+                "Using the default personality: PERSONA is empty or couldn't be read from .env "
+                "(a double quote inside the text breaks it; look for 'could not parse' above)"
+            )
+        else:
+            log.info("Personality: %s", PERSONA if len(PERSONA) <= 100 else PERSONA[:100] + "…")
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
