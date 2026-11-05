@@ -1,0 +1,5 @@
+.env
+watched.json
+__pycache__/
+.venv/
+venv/
