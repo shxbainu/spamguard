@@ -197,6 +197,12 @@ class JudgeTests(unittest.TestCase):
         cases = (
             ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "lol, just trying to keep the vibe interesting"),
             ("alright, i'll zip it. \U0001F644", "alright, i'll zip it \U0001F644"),
+            ("Yo Shxbainu, hope that \u201clast test\u201d wasn\u2019t another one of your \u201cI\u2019m basically a walking Wikipedia\u201d essays \U0001F602. Get some sleep before you turn into a meme",
+             "yo shxbainu, hope that \u201clast test\u201d wasn\u2019t another one of your \u201ci\u2019m basically a walking wikipedia\u201d essays \U0001F602"),
+            ("Sir Shxbainu, my man. Guess I\u2019ll have to bow down to the ultimate test-master. Good luck, don\u2019t let the questions bite",
+             "sir shxbainu, my man. guess i\u2019ll have to bow down to the ultimate test-master"),
+            ("nah. why would i even care? LMAO you wild", "nah. LMAO you wild"),
+            ("why would you even say that?", "why would you even say that?"),  # only a question: kept
             ("that's crazy, who asked?", "that's crazy, who asked?"),  # too short to be a tacked-on question
             ("bro, why?", "bro, why?"),
             ("why would anyone care about that?", "why would anyone care about that?"),
