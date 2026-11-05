@@ -76,6 +76,8 @@ CHAT_COOLDOWN_SECONDS = env_int("CHAT_COOLDOWN_SECONDS", 4)
 CHAT_MAX_PER_MINUTE = env_int("CHAT_MAX_PER_MINUTE", 20)
 PERSONA = os.getenv("PERSONA", "").strip() or DEFAULT_PERSONA
 PERSONA_ANYONE = env_bool("PERSONA_ANYONE", False)
+# If set, only these user IDs can change the personality (overrides PERSONA_ANYONE and mods).
+PERSONA_EDITOR_IDS = env_ids("PERSONA_EDITOR_IDS")
 
 SHUTUP_PER_WEEK = env_int("SHUTUP_PER_WEEK", 3)
 SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
@@ -90,6 +92,13 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 DB_PATH = Path(__file__).with_name("spamguard.db")
 
 log = logging.getLogger("spamguard")
+
+
+def speaker(member: discord.abc.User) -> str:
+    """How a person appears to the AI: nickname plus @username, so it can tell who's who."""
+    if member.display_name.lower() == member.name.lower():
+        return member.name
+    return f"{member.display_name} (@{member.name})"
 
 
 class SpamGuard(discord.Client):
@@ -207,7 +216,7 @@ class SpamGuard(discord.Client):
         )
         history = self.history[message.channel.id]
         context = list(history)
-        history.append((message.author.display_name, "[GIF]" if is_gif else text or "[attachment]"))
+        history.append((speaker(message.author), "[GIF]" if is_gif else text or "[attachment]"))
 
         in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
         if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
@@ -262,7 +271,7 @@ class SpamGuard(discord.Client):
         name = message.guild.me.display_name
         try:
             async with message.channel.typing():
-                text = await self.chatter.chat(name, self.persona(message.guild.id), list(history), message.author.display_name)
+                text = await self.chatter.chat(name, self.persona(message.guild.id), list(history), speaker(message.author))
             if not text:
                 return
             # No pings from the AI, ever (it can't @everyone or mention people).
@@ -273,7 +282,7 @@ class SpamGuard(discord.Client):
         history.append((name, text))
 
     async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
-        verdict = await self.judge.judge(message.author.display_name, context, text)
+        verdict = await self.judge.judge(speaker(message.author), context, text)
         if verdict is None or verdict.ok:
             return
         member = message.author
@@ -496,7 +505,7 @@ async def settle_cmd(
     await interaction.response.defer(thinking=True)
 
     transcript = [
-        (m.author.display_name, m.clean_content or "[attachment]")
+        (speaker(m.author), m.clean_content or "[attachment]")
         async for m in interaction.channel.history(limit=messages)
         if not m.author.bot
     ]
@@ -504,7 +513,7 @@ async def settle_cmd(
     if not transcript:
         await interaction.followup.send("There's nothing here to settle.")
         return
-    ruling = await bot.settler.settle(transcript, interaction.user.display_name, comment, bot.persona(interaction.guild_id))
+    ruling = await bot.settler.settle(transcript, speaker(interaction.user), comment, bot.persona(interaction.guild_id))
     if ruling is None:
         await interaction.followup.send("The AI couldn't be reached. Try again in a minute.")
         return
@@ -527,7 +536,12 @@ persona_commands = app_commands.Group(name="persona", description="The AI chat p
 
 
 def can_change_persona(member: discord.Member) -> bool:
+    if PERSONA_EDITOR_IDS:
+        return member.id in PERSONA_EDITOR_IDS
     return PERSONA_ANYONE or member.guild_permissions.moderate_members
+
+
+NOT_ALLOWED = "You're not allowed to change my personality."
 
 
 @persona_commands.command(name="set", description="Change who the bot is when it chats")
@@ -535,7 +549,7 @@ def can_change_persona(member: discord.Member) -> bool:
 async def persona_set_cmd(interaction: discord.Interaction, personality: app_commands.Range[str, 3, 1000]) -> None:
     bot: SpamGuard = interaction.client
     if not can_change_persona(interaction.user):
-        await interaction.response.send_message("Only mods can change my personality.", ephemeral=True)
+        await interaction.response.send_message(NOT_ALLOWED, ephemeral=True)
         return
     bot.store.set_setting(f"persona:{interaction.guild_id}", personality)
     await interaction.response.send_message(
@@ -553,7 +567,7 @@ async def persona_show_cmd(interaction: discord.Interaction) -> None:
 async def persona_reset_cmd(interaction: discord.Interaction) -> None:
     bot: SpamGuard = interaction.client
     if not can_change_persona(interaction.user):
-        await interaction.response.send_message("Only mods can change my personality.", ephemeral=True)
+        await interaction.response.send_message(NOT_ALLOWED, ephemeral=True)
         return
     bot.store.set_setting(f"persona:{interaction.guild_id}", None)
     await interaction.response.send_message(f"🎭 Back to my default personality: {PERSONA}")
