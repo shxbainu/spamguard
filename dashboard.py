@@ -8,6 +8,7 @@ import base64
 import hmac
 import time
 from pathlib import Path
+from typing import Callable, Optional
 
 from aiohttp import web
 
@@ -16,7 +17,29 @@ from storage import Store
 PAGE = Path(__file__).with_name("dashboard.html")
 
 
-def create_app(store: Store, password: str = "") -> web.Application:
+def ids_as_text(rows: list[dict]) -> list[dict]:
+    """Discord IDs don't fit in a JavaScript number, so the page gets them as strings."""
+    return [{k: str(v) if k in ("guild_id", "user_id") else v for k, v in row.items()} for row in rows]
+
+
+ResetCallback = Callable[[Optional[int], Optional[int]], None]
+
+
+def create_app(
+    store: Store,
+    password: str = "",
+    reset_after: float = 72 * 3600,
+    on_reset: ResetCallback | None = None,
+) -> web.Application:
+    """on_reset(guild_id, user_id) clears offenses; user_id None means everyone.
+    Without it (dashboard running on its own), only the database is cleared."""
+    if on_reset is None:
+        def on_reset(guild_id, user_id):
+            if user_id is None:
+                store.forgive_all(guild_id)
+            else:
+                store.forgive(guild_id, user_id)
+
     @web.middleware
     async def require_password(request: web.Request, handler):
         if password:
@@ -36,22 +59,48 @@ def create_app(store: Store, password: str = "") -> web.Application:
             category=q.get("category") or None,
             action=q.get("action") or None,
         )
-        return web.json_response(rows)
+        return web.json_response(ids_as_text(rows))
 
     async def stats(request: web.Request) -> web.Response:
-        return web.json_response(store.stats(time.time()))
+        stats = store.stats(time.time())
+        stats["top_users_7d"] = ids_as_text(stats["top_users_7d"])
+        return web.json_response(stats)
+
+    async def offenders(request: web.Request) -> web.Response:
+        return web.json_response(ids_as_text(store.active_offenders(time.time(), reset_after)))
+
+    async def reset(request: web.Request) -> web.Response:
+        # Requiring a JSON body stops other websites from triggering this through your browser.
+        if request.content_type != "application/json":
+            return web.json_response({"error": "expected JSON"}, status=415)
+        body = await request.json()
+        guild_id = body.get("guild_id")
+        user_id = body.get("user_id")
+        if user_id is None and not body.get("all"):
+            return web.json_response({"error": "give user_id, or all: true"}, status=400)
+        on_reset(int(guild_id) if guild_id is not None else None, int(user_id) if user_id is not None else None)
+        return web.json_response({"ok": True})
 
     app = web.Application(middlewares=[require_password])
     app.add_routes([
         web.get("/", index),
         web.get("/api/punishments", punishments),
         web.get("/api/stats", stats),
+        web.get("/api/offenders", offenders),
+        web.post("/api/reset", reset),
     ])
     return app
 
 
-async def start_dashboard(store: Store, host: str, port: int, password: str = "") -> web.AppRunner:
-    runner = web.AppRunner(create_app(store, password))
+async def start_dashboard(
+    store: Store,
+    host: str,
+    port: int,
+    password: str = "",
+    reset_after: float = 72 * 3600,
+    on_reset: ResetCallback | None = None,
+) -> web.AppRunner:
+    runner = web.AppRunner(create_app(store, password, reset_after, on_reset))
     await runner.setup()
     await web.TCPSite(runner, host, port).start()
     return runner
@@ -65,7 +114,7 @@ if __name__ == "__main__":
     load_dotenv()
     store = Store(str(Path(__file__).with_name("spamguard.db")))
     web.run_app(
-        create_app(store, os.getenv("DASHBOARD_PASSWORD", "")),
+        create_app(store, os.getenv("DASHBOARD_PASSWORD", ""), int(os.getenv("OFFENSE_RESET_HOURS") or 72) * 3600),
         host=os.getenv("DASHBOARD_HOST") or "127.0.0.1",
         port=int(os.getenv("DASHBOARD_PORT") or 8080),
     )

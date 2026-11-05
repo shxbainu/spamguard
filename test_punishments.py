@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import time
 import unittest
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -50,6 +51,18 @@ class StoreTests(unittest.TestCase):
         self.store.forgive(1, 7)
         self.assertEqual(self.store.offenses(1, 7, now=1, reset_after=DAY), 0)
 
+    def test_forgive_all_and_active_offenders(self):
+        self.store.next_offense(1, 7, now=0, reset_after=3 * DAY)
+        self.store.next_offense(1, 7, now=10, reset_after=3 * DAY)
+        self.store.next_offense(1, 8, now=10, reset_after=3 * DAY)
+        self.store.next_offense(2, 9, now=10, reset_after=3 * DAY)
+        active = self.store.active_offenders(now=20, reset_after=3 * DAY)
+        self.assertEqual([(o["user_id"], o["offenses"]) for o in active], [(7, 2), (8, 1), (9, 1)])
+        self.assertEqual(active[0]["resets_at"], 10 + 3 * DAY)
+        self.assertEqual(self.store.active_offenders(now=11 + 3 * DAY, reset_after=3 * DAY), [], "expired after 3 days")
+        self.store.forgive_all(guild_id=1)
+        self.assertEqual([o["user_id"] for o in self.store.active_offenders(now=20, reset_after=3 * DAY)], [9])
+
     def record(self, **overrides):
         fields = dict(guild_id=1, user_id=7, user_name="dave", channel_name="general", action="timeout",
                       duration_seconds=30, offense=1, category="gif", reason="GIF spam", evidence="4 GIFs")
@@ -74,11 +87,14 @@ class StoreTests(unittest.TestCase):
 
 
 class DashboardTests(unittest.TestCase):
-    def call(self, store, path, password="", auth=None):
+    def call(self, store, path, password="", auth=None, post=None, on_reset=None):
         async def run():
-            async with TestClient(TestServer(create_app(store, password))) as client:
+            async with TestClient(TestServer(create_app(store, password, on_reset=on_reset))) as client:
                 headers = {"Authorization": auth} if auth else {}
-                resp = await client.get(path, headers=headers)
+                if post is not None:
+                    resp = await client.post(path, json=post, headers=headers)
+                else:
+                    resp = await client.get(path, headers=headers)
                 body = await resp.json() if resp.content_type == "application/json" else await resp.text()
                 return resp.status, body
         return asyncio.run(run())
@@ -93,6 +109,25 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(stats["total"], 1)
         status, page = self.call(store, "/")
         self.assertIn("Butt Spreader", page)
+
+    def test_big_ids_are_strings(self):
+        store = Store(":memory:")
+        big = 1222222222222222221
+        store.next_offense(1, big, now=time.time(), reset_after=DAY)
+        store.record(guild_id=1, user_id=big, user_name="dave", channel_name="general", action="timeout",
+                     duration_seconds=10, offense=1, category="gif", reason="GIF spam")
+        self.assertEqual(self.call(store, "/api/punishments")[1][0]["user_id"], str(big))
+        self.assertEqual(self.call(store, "/api/offenders")[1][0]["user_id"], str(big))
+
+    def test_reset_one_and_all(self):
+        calls = []
+        store = Store(":memory:")
+        status, _ = self.call(store, "/api/reset", post={"guild_id": "1", "user_id": "1222222222222222221"},
+                              on_reset=lambda g, u: calls.append((g, u)))
+        self.assertEqual(status, 200)
+        self.call(store, "/api/reset", post={"all": True}, on_reset=lambda g, u: calls.append((g, u)))
+        self.assertEqual(calls, [(1, 1222222222222222221), (None, None)])
+        self.assertEqual(self.call(store, "/api/reset", post={})[0], 400)
 
     def test_password(self):
         store = Store(":memory:")

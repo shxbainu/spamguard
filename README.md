@@ -34,13 +34,12 @@ Every offense, whatever the type, moves the member one step up:
 
 | Offense | Punishment |
 |---|---|
-| 1st | 30 second timeout |
-| 2nd | 2 minute timeout |
-| 3rd | 10 minute timeout |
-| 4th | 1 hour timeout |
-| 5th and later | Kick. They get a DM with an invite; if they rejoin within 10 minutes they're kicked again, and after that their roles are restored. |
+| 1st | 10 second timeout |
+| 2nd | 20 second timeout |
+| 3rd | 30 second timeout |
+| 4th and later | Kick. They get a DM with an invite; if they rejoin within 10 minutes they're kicked again, and after that their roles are restored. |
 
-After 24 hours with no offenses, they start again at the bottom. Change the ladder with `PUNISHMENTS=30s,2m,10m,1h,kick` in `.env` (any list of durations like `45s`, `5m`, `2h`, `1d`, with `kick` anywhere).
+After 3 days with no offenses, they start again at the bottom. You can also reset anyone by hand with `/spreader reset` or the **Reset** buttons on the dashboard. Change the ladder with `PUNISHMENTS=10s,20s,30s,kick` and the reset time with `OFFENSE_RESET_HOURS=72` in `.env` (any list of durations like `45s`, `5m`, `2h`, `1d`, with `kick` anywhere).
 
 Bots can't put someone back into a server after kicking them; Discord only allows that with the user's own login ([Add Guild Member](https://docs.discord.com/developers/resources/guild#add-guild-member)). That's why the kick step DMs an invite instead.
 
@@ -50,6 +49,7 @@ While the bot runs, open **http://localhost:8080** on the same computer. It show
 
 - Counts for the last 24 hours, timeouts, kicks, and all time
 - Which checks are catching people, and who's been punished most this week
+- Everyone's current offense count and when it resets, with a **Reset** button for each person and **Reset everyone**
 - Every punishment: when, who, timeout length or kick, which offense number, the reason, the messages that caused it, and the channel
 - Search by username or ID, and filter by reason or action. It refreshes every 15 seconds.
 
@@ -112,6 +112,8 @@ Only people with the **Timeout Members** permission can use these.
 | Command | Does |
 |---|---|
 | `/spreader history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
+| `/spreader reset @user` | Resets their offense count to zero (a timeout they're in keeps running) |
+| `/spreader resetall` | Resets everyone's offense count in the server |
 | `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |
 
 ## Tests

@@ -44,8 +44,8 @@ EXEMPT_ROLE_IDS = env_ids("EXEMPT_ROLE_IDS")
 EXEMPT_MODS = env_bool("EXEMPT_MODS", True)
 
 KICK_MINUTES = env_int("KICK_MINUTES", 10)
-PUNISHMENTS = parse_ladder(os.getenv("PUNISHMENTS") or "30s,2m,10m,1h,kick", kick_seconds=KICK_MINUTES * 60)
-OFFENSE_RESET_HOURS = env_int("OFFENSE_RESET_HOURS", 24)
+PUNISHMENTS = parse_ladder(os.getenv("PUNISHMENTS") or "10s,20s,30s,kick", kick_seconds=KICK_MINUTES * 60)
+OFFENSE_RESET_HOURS = env_int("OFFENSE_RESET_HOURS", 72)
 DELETE_SPAM = env_bool("DELETE_SPAM", True)
 ANNOUNCE = env_bool("ANNOUNCE", True)
 
@@ -108,7 +108,10 @@ class SpamGuard(discord.Client):
         else:
             await self.tree.sync()  # global; can take a while to show up
         if DASHBOARD_ENABLED:
-            self._dashboard = await start_dashboard(self.store, DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_PASSWORD)
+            self._dashboard = await start_dashboard(
+                self.store, DASHBOARD_HOST, DASHBOARD_PORT, DASHBOARD_PASSWORD,
+                reset_after=OFFENSE_RESET_HOURS * 3600, on_reset=self.reset_offenses,
+            )
             log.info("Dashboard running at http://%s:%d", DASHBOARD_HOST, DASHBOARD_PORT)
 
     async def close(self) -> None:
@@ -120,6 +123,15 @@ class SpamGuard(discord.Client):
         ai = f"{AI_PROVIDER} ({self.judge.model})" if self.judge else "off"
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
         log.info("Logged in as %s. AI=%s. Punishments: %s", self.user, ai, ladder)
+
+    def reset_offenses(self, guild_id: int | None, user_id: int | None) -> None:
+        """Clears offense counts and AI strikes for one member, or everyone when user_id is None."""
+        if user_id is None:
+            self.store.forgive_all(guild_id)
+            self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
+        else:
+            self.store.forgive(guild_id, user_id)
+            self.strikes.reset(user_id)
 
     # ---- detection ---------------------------------------------------------
 
@@ -314,11 +326,25 @@ async def history_cmd(interaction: discord.Interaction, user: discord.Member) ->
 async def pardon_cmd(interaction: discord.Interaction, user: discord.Member) -> None:
     bot: SpamGuard = interaction.client
     bot.penalized.pop((interaction.guild_id, user.id), None)
-    bot.strikes.reset(user.id)
-    bot.store.forgive(interaction.guild_id, user.id)
+    bot.reset_offenses(interaction.guild_id, user.id)
     if user.is_timed_out():
         await user.timeout(None, reason=f"Pardoned by {interaction.user}")
     await interaction.response.send_message(f"Pardoned {user.mention}; their offenses are reset.", ephemeral=True)
+
+
+@spamguard_commands.command(name="reset", description="Reset a member's offense count to zero (doesn't end a current timeout)")
+async def reset_cmd(interaction: discord.Interaction, user: discord.Member) -> None:
+    bot: SpamGuard = interaction.client
+    bot.reset_offenses(interaction.guild_id, user.id)
+    next_step = step_for(PUNISHMENTS, 1).describe()
+    await interaction.response.send_message(f"Reset {user.mention}'s offenses. Their next punishment would be a {next_step}.", ephemeral=True)
+
+
+@spamguard_commands.command(name="resetall", description="Reset everyone's offense count to zero")
+async def resetall_cmd(interaction: discord.Interaction) -> None:
+    bot: SpamGuard = interaction.client
+    bot.reset_offenses(interaction.guild_id, None)
+    await interaction.response.send_message("Reset everyone's offenses in this server.", ephemeral=True)
 
 
 def main() -> None:

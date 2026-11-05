@@ -49,6 +49,14 @@
   .muted { color: var(--muted); font-size: 12px; }
   .evidence { margin-top: 4px; color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .empty { padding: 32px; text-align: center; color: var(--muted); }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .panel-head h2 { margin: 0; }
+  .offenders { margin-bottom: 16px; }
+  .offender { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .offender:last-child { border-bottom: 0; }
+  .level { font-weight: 650; font-variant-numeric: tabular-nums; }
+  button { font: inherit; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -68,6 +76,14 @@
   <section class="row">
     <div class="panel"><h2>Why people were punished</h2><div class="bars" id="categories"></div></div>
     <div class="panel"><h2>Most punished, last 7 days</h2><div class="bars" id="topUsers"></div></div>
+  </section>
+
+  <section class="panel offenders">
+    <div class="panel-head">
+      <h2>Current offense levels</h2>
+      <button id="resetAll">Reset everyone</button>
+    </div>
+    <div id="offenders"></div>
   </section>
 
   <section class="panel">
@@ -125,6 +141,20 @@ function bars(el, items) {
     : `<p class="muted">Nothing yet.</p>`;
 }
 
+function until(timestamp) {
+  const s = Math.max(0, timestamp - Date.now() / 1000);
+  if (s < 3600) return `${Math.ceil(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
+async function reset(body, question) {
+  if (!confirm(question)) return;
+  const resp = await fetch("api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!resp.ok) alert("Reset failed. Is the bot running?");
+  load();
+}
+
 function punishmentBadge(p) {
   if (p.action === "kick") return `<span class="badge kick">Kick</span><div class="muted">rejoin after ${duration(p.duration_seconds)}</div>`;
   if (p.action === "failed") return `<span class="badge failed">Failed</span><div class="muted">no permission</div>`;
@@ -134,10 +164,17 @@ function punishmentBadge(p) {
 async function load() {
   const params = new URLSearchParams({ user: $("user").value.trim(), category: $("category").value, action: $("action").value });
   try {
-    const [stats, rows] = await Promise.all([
+    const [stats, rows, offenders] = await Promise.all([
       fetch("api/stats").then((r) => r.json()),
       fetch(`api/punishments?${params}`).then((r) => r.json()),
+      fetch("api/offenders").then((r) => r.json()),
     ]);
+    $("offenders").innerHTML = offenders.length ? offenders.map((o) => `
+      <div class="offender">
+        <div>${esc(o.user_name || o.user_id)}<div class="muted">${esc(o.user_id)}</div></div>
+        <div><span class="level">${o.offenses} offense${o.offenses === 1 ? "" : "s"}</span><div class="muted">resets in ${until(o.resets_at)}</div></div>
+        <button data-guild="${esc(o.guild_id)}" data-user="${esc(o.user_id)}" data-name="${esc(o.user_name || o.user_id)}">Reset</button>
+      </div>`).join("") : `<p class="muted">Nobody has any offenses right now.</p>`;
     $("last24").textContent = stats.last_24h;
     $("timeouts").textContent = stats.timeouts;
     $("kicks").textContent = stats.kicks;
@@ -160,6 +197,13 @@ async function load() {
     $("updated").textContent = "Can't reach the bot. Is it running?";
   }
 }
+
+// IDs stay strings: they're too big for JavaScript numbers.
+$("offenders").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) reset({ guild_id: b.dataset.guild, user_id: b.dataset.user }, `Reset ${b.dataset.name}'s offenses to zero?`);
+});
+$("resetAll").addEventListener("click", () => reset({ all: true }, "Reset everyone's offenses to zero?"));
 
 let typing;
 $("user").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(load, 250); });

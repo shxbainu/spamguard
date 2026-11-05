@@ -63,6 +63,23 @@ class Store:
         self.db.execute("DELETE FROM offenders WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
         self.db.commit()
 
+    def forgive_all(self, guild_id: int | None = None) -> None:
+        if guild_id is None:
+            self.db.execute("DELETE FROM offenders")
+        else:
+            self.db.execute("DELETE FROM offenders WHERE guild_id = ?", (guild_id,))
+        self.db.commit()
+
+    def active_offenders(self, now: float, reset_after: float) -> list[dict]:
+        """Members whose offense count hasn't reset yet, highest first, with their latest name."""
+        rows = self.db.execute(
+            "SELECT o.guild_id, o.user_id, o.offenses, o.last_offense, "
+            "(SELECT p.user_name FROM punishments p WHERE p.user_id = o.user_id ORDER BY p.created_at DESC LIMIT 1) AS user_name "
+            "FROM offenders o WHERE o.last_offense >= ? ORDER BY o.offenses DESC, o.last_offense DESC",
+            (now - reset_after,),
+        )
+        return [dict(row, resets_at=row["last_offense"] + reset_after) for row in rows]
+
     # ---- punishment history ------------------------------------------------
 
     def record(
