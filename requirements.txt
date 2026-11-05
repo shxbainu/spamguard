@@ -1,4 +1,5 @@
 discord.py>=2.4
+aiohttp>=3.9
 google-genai>=1.47
 anthropic>=0.125
 python-dotenv>=1.0

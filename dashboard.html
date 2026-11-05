@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpamGuard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2129; --muted: #667085; --line: #e4e7ec;
+    --accent: #5865f2; --timeout: #b54708; --timeout-bg: #fef0c7; --kick: #b42318; --kick-bg: #fee4e2;
+    --failed: #475467; --failed-bg: #eaecf0; --chip: #eef0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111318; --panel: #1a1d24; --text: #e6e8ee; --muted: #98a2b3; --line: #2a2f3a;
+      --accent: #8b94ff; --timeout: #fdb022; --timeout-bg: #3a2a0c; --kick: #f97066; --kick-bg: #3d1716;
+      --failed: #98a2b3; --failed-bg: #2a2f3a; --chip: #262a45;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 22px; }
+  h2 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; }
+  .updated { color: var(--muted); font-size: 13px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 13px; }
+  .card .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+  .bars div { display: grid; grid-template-columns: 120px 1fr 40px; align-items: center; gap: 8px; margin: 6px 0; }
+  .bar { height: 8px; border-radius: 4px; background: var(--accent); min-width: 2px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input { flex: 1; min-width: 180px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  tr:last-child td { border-bottom: 0; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .timeout { color: var(--timeout); background: var(--timeout-bg); }
+  .kick { color: var(--kick); background: var(--kick-bg); }
+  .failed { color: var(--failed); background: var(--failed-bg); }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .evidence { margin-top: 4px; color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SpamGuard</h1>
+    <span class="updated" id="updated">Loading…</span>
+  </header>
+
+  <section class="cards">
+    <div class="card"><div class="label">Last 24 hours</div><div class="value" id="last24">–</div></div>
+    <div class="card"><div class="label">Timeouts</div><div class="value" id="timeouts">–</div></div>
+    <div class="card"><div class="label">Kicks</div><div class="value" id="kicks">–</div></div>
+    <div class="card"><div class="label">All time</div><div class="value" id="total">–</div></div>
+  </section>
+
+  <section class="row">
+    <div class="panel"><h2>Why people were punished</h2><div class="bars" id="categories"></div></div>
+    <div class="panel"><h2>Most punished, last 7 days</h2><div class="bars" id="topUsers"></div></div>
+  </section>
+
+  <section class="panel">
+    <div class="filters">
+      <input id="user" type="search" placeholder="Search by username or user ID">
+      <select id="category">
+        <option value="">All reasons</option>
+        <option value="gif">GIF spam</option>
+        <option value="repeat">Repeating</option>
+        <option value="ai">Not contributing (AI)</option>
+      </select>
+      <select id="action">
+        <option value="">All actions</option>
+        <option value="timeout">Timeouts</option>
+        <option value="kick">Kicks</option>
+        <option value="failed">Failed</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Member</th><th>Punishment</th><th>Offense</th><th>Reason</th><th>Channel</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const CATEGORY = { gif: "GIF spam", repeat: "Repeating", ai: "Not contributing" };
+const $ = (id) => document.getElementById(id);
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function duration(seconds) {
+  for (const [unit, size] of [["d", 86400], ["h", 3600], ["m", 60]]) {
+    if (seconds >= size && seconds % size === 0) return `${seconds / size}${unit}`;
+  }
+  return `${seconds}s`;
+}
+
+function ago(timestamp) {
+  const s = Math.max(0, Date.now() / 1000 - timestamp);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function bars(el, items) {
+  const max = Math.max(1, ...items.map((i) => i.count));
+  el.innerHTML = items.length
+    ? items.map((i) => `<div><span>${esc(i.label)}</span><span class="bar" style="width:${(i.count / max) * 100}%"></span><span class="num">${i.count}</span></div>`).join("")
+    : `<p class="muted">Nothing yet.</p>`;
+}
+
+function punishmentBadge(p) {
+  if (p.action === "kick") return `<span class="badge kick">Kick</span><div class="muted">rejoin after ${duration(p.duration_seconds)}</div>`;
+  if (p.action === "failed") return `<span class="badge failed">Failed</span><div class="muted">no permission</div>`;
+  return `<span class="badge timeout">Timeout ${duration(p.duration_seconds)}</span>`;
+}
+
+async function load() {
+  const params = new URLSearchParams({ user: $("user").value.trim(), category: $("category").value, action: $("action").value });
+  try {
+    const [stats, rows] = await Promise.all([
+      fetch("api/stats").then((r) => r.json()),
+      fetch(`api/punishments?${params}`).then((r) => r.json()),
+    ]);
+    $("last24").textContent = stats.last_24h;
+    $("timeouts").textContent = stats.timeouts;
+    $("kicks").textContent = stats.kicks;
+    $("total").textContent = stats.total;
+    bars($("categories"), Object.entries(stats.by_category).map(([k, count]) => ({ label: CATEGORY[k], count })));
+    bars($("topUsers"), stats.top_users_7d.map((u) => ({ label: u.user_name, count: u.count })));
+
+    $("rows").innerHTML = rows.length ? rows.map((p) => `
+      <tr>
+        <td title="${esc(new Date(p.created_at * 1000).toLocaleString())}">${ago(p.created_at)}</td>
+        <td>${esc(p.user_name)}<div class="muted">${esc(p.user_id)}</div></td>
+        <td>${punishmentBadge(p)}</td>
+        <td>#${p.offense}</td>
+        <td><span class="chip">${esc(CATEGORY[p.category] || p.category)}</span> ${esc(p.reason)}
+          ${p.evidence ? `<div class="evidence">${esc(p.evidence)}</div>` : ""}</td>
+        <td>${p.channel_name ? "#" + esc(p.channel_name) : ""}</td>
+      </tr>`).join("") : `<tr><td colspan="6" class="empty">No punishments match.</td></tr>`;
+    $("updated").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 15s`;
+  } catch (err) {
+    $("updated").textContent = "Can't reach the bot. Is it running?";
+  }
+}
+
+let typing;
+$("user").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(load, 250); });
+$("category").addEventListener("change", load);
+$("action").addEventListener("change", load);
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

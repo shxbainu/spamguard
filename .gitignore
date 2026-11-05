@@ -1,5 +1,6 @@
 .env
-watched.json
+spamguard.db
 __pycache__/
 .venv/
 venv/
+.claude/
