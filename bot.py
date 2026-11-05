@@ -1,5 +1,6 @@
 """Ben's Butt Spreader (SpamGuard): watches every member for GIF spam, repeated messages and low-effort
-noise, and punishes repeat offenders with escalating timeouts that end in a kick."""
+noise, and punishes repeat offenders with escalating timeouts that end in a kick. Also has /shutup and
+/settleargument for everyone."""
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +10,7 @@ import time
 from collections import defaultdict, deque
 from datetime import timedelta
 from pathlib import Path
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -63,6 +65,11 @@ AI_MAX_PER_MINUTE = env_int("AI_MAX_PER_MINUTE", 12)
 AI_MIN_LENGTH = env_int("AI_MIN_LENGTH", 3)
 CONTEXT_MESSAGES = env_int("CONTEXT_MESSAGES", 15)
 
+SHUTUP_PER_WEEK = env_int("SHUTUP_PER_WEEK", 3)
+SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
+SHUTUP_WINDOW = 7 * 86400
+SETTLE_COOLDOWN_SECONDS = env_int("SETTLE_COOLDOWN_SECONDS", 30)
+
 DASHBOARD_ENABLED = env_bool("DASHBOARD_ENABLED", True)
 DASHBOARD_HOST = os.getenv("DASHBOARD_HOST") or "127.0.0.1"
 DASHBOARD_PORT = env_int("DASHBOARD_PORT", 8080)
@@ -80,6 +87,7 @@ class SpamGuard(discord.Client):
         intents.members = True  # privileged: needed to restore roles when a kicked user rejoins
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
+        self.tree.error(self.on_app_command_error)
 
         self.store = Store(str(DB_PATH))
         self.gifs = GifSpamDetector(GIF_LIMIT, GIF_WINDOW_SECONDS)
@@ -100,7 +108,8 @@ class SpamGuard(discord.Client):
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
-        self.tree.add_command(spamguard_commands)
+        for command in (spamguard_commands, shutup_cmd, settle_cmd):
+            self.tree.add_command(command)
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
             self.tree.copy_global_to(guild=guild)
@@ -123,6 +132,14 @@ class SpamGuard(discord.Client):
         ai = f"{AI_PROVIDER} ({self.judge.model})" if self.judge else "off"
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
         log.info("Logged in as %s. AI=%s. Punishments: %s", self.user, ai, ladder)
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        if isinstance(error, app_commands.CommandOnCooldown):
+            await interaction.response.send_message(f"Slow down, try again in {error.retry_after:.0f}s.", ephemeral=True)
+            return
+        log.exception("Slash command failed", exc_info=error)
+        reply = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
+        await reply("Something went wrong running that command.", ephemeral=True)
 
     def reset_offenses(self, guild_id: int | None, user_id: int | None) -> None:
         """Clears offense counts and AI strikes for one member, or everyone when user_id is None."""
@@ -345,6 +362,103 @@ async def resetall_cmd(interaction: discord.Interaction) -> None:
     bot: SpamGuard = interaction.client
     bot.reset_offenses(interaction.guild_id, None)
     await interaction.response.send_message("Reset everyone's offenses in this server.", ephemeral=True)
+
+
+# ---- commands anyone can use -------------------------------------------------
+
+def shutup_blocker(author: discord.Member, target: discord.Member) -> str | None:
+    """Why `author` can't /shutup `target`, or None if they can."""
+    guild = target.guild
+    if target.id == author.id:
+        return "You can't /shutup yourself."
+    if target.bot:
+        return "Bots can't be shut up."
+    if target.id == guild.owner_id or target.guild_permissions.administrator or target.top_role >= guild.me.top_role:
+        return f"I can't time out {target.mention}: they're an admin or their role is above mine."
+    if target.is_timed_out():
+        return f"{target.mention} is already timed out."
+    return None
+
+
+@app_commands.command(name="shutup", description=f"Time someone out for {SHUTUP_SECONDS} seconds ({SHUTUP_PER_WEEK} uses per week)")
+@app_commands.describe(user="Who needs to shut up")
+@app_commands.guild_only()
+async def shutup_cmd(interaction: discord.Interaction, user: discord.Member) -> None:
+    bot: SpamGuard = interaction.client
+    author = interaction.user
+    now = time.time()
+    used = bot.store.shutups_used(interaction.guild_id, author.id, now, SHUTUP_WINDOW)
+    if len(used) >= SHUTUP_PER_WEEK:
+        await interaction.response.send_message(
+            f"You've used all {SHUTUP_PER_WEEK} of your /shutups this week. "
+            f"Your next one comes back <t:{int(used[0] + SHUTUP_WINDOW)}:R>.",
+            ephemeral=True,
+        )
+        return
+    if problem := shutup_blocker(author, user):
+        await interaction.response.send_message(problem, ephemeral=True)
+        return
+
+    reason = f"/shutup from {author}"
+    try:
+        await user.timeout(timedelta(seconds=SHUTUP_SECONDS), reason=reason)
+    except discord.Forbidden:
+        await interaction.response.send_message(f"I don't have permission to time out {user.mention}.", ephemeral=True)
+        return
+    bot.store.record_shutup(interaction.guild_id, author.id, user.id, now)
+    bot.store.record(
+        guild_id=interaction.guild_id, user_id=user.id, user_name=str(user),
+        channel_name=getattr(interaction.channel, "name", None), action="timeout", duration_seconds=SHUTUP_SECONDS,
+        offense=0, category="shutup", reason=reason,
+    )
+    left = SHUTUP_PER_WEEK - len(used) - 1
+    await interaction.response.send_message(
+        f"🤫 {author.mention} told {user.mention} to shut up. Timed out for {format_duration(SHUTUP_SECONDS)}. "
+        f"({author.display_name} has {left} /shutup{'' if left == 1 else 's'} left this week)"
+    )
+
+
+@app_commands.command(name="settleargument", description="The AI reads the argument in this channel and decides who's right")
+@app_commands.describe(topic="What the argument is about (optional, helps the AI)", messages="How many recent messages to read (default 50)")
+@app_commands.guild_only()
+@app_commands.checks.cooldown(1, SETTLE_COOLDOWN_SECONDS, key=lambda i: i.channel_id)
+async def settle_cmd(
+    interaction: discord.Interaction,
+    topic: Optional[str] = None,
+    messages: app_commands.Range[int, 5, 100] = 50,
+) -> None:
+    bot: SpamGuard = interaction.client
+    if bot.judge is None:
+        await interaction.response.send_message("The AI is turned off (AI_ENABLED=false).", ephemeral=True)
+        return
+    if not bot.ai_budget_available():
+        await interaction.response.send_message("The AI is busy right now, try again in a minute.", ephemeral=True)
+        return
+    await interaction.response.defer(thinking=True)
+
+    transcript = [
+        (m.author.display_name, m.clean_content or "[attachment]")
+        async for m in interaction.channel.history(limit=messages)
+        if not m.author.bot
+    ]
+    transcript.reverse()
+    if not transcript:
+        await interaction.followup.send("There's nothing here to settle.")
+        return
+    ruling = await bot.judge.settle(transcript, topic)
+    if ruling is None:
+        await interaction.followup.send("The AI couldn't be reached. Try again in a minute.")
+        return
+
+    embed = discord.Embed(title=f"⚖️ {ruling.topic}"[:256], description=f"**{ruling.verdict}**"[:4096], color=0x5865F2)
+    for side in ruling.sides[:6]:
+        embed.add_field(name=(side["who"] or "?")[:256], value=(side["position"] or "–")[:1024], inline=False)
+    embed.add_field(name="Winner", value=(ruling.winner or "Nobody")[:1024], inline=False)
+    embed.add_field(name="Why", value=(ruling.reasoning or "–")[:1024], inline=False)
+    if ruling.facts:
+        embed.add_field(name="Facts", value="\n".join(f"• {fact}" for fact in ruling.facts[:4])[:1024], inline=False)
+    embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.judge.model} · AI can be wrong")
+    await interaction.followup.send(embed=embed)
 
 
 def main() -> None:

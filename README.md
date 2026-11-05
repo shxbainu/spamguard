@@ -1,6 +1,6 @@
 # Ben's Butt Spreader
 
-A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened.
+A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened, plus two commands for everyone: `/shutup` and `/settleargument`.
 
 ## What counts as an offense
 
@@ -103,9 +103,20 @@ Edit `.env`: paste your `DISCORD_TOKEN` and `GEMINI_API_KEY`, and your server ID
 python bot.py
 ```
 
-The bot only works while it's running. To keep it online 24/7, run it on an always-on machine or a host such as Railway, Fly.io or a cheap VPS.
+The bot only works while it's running. To keep it online without your computer, see [Run it 24/7 for free](#run-it-247-for-free).
 
 ## Slash commands
+
+### For everyone
+
+| Command | Does |
+|---|---|
+| `/shutup @user` | Times them out for 10 seconds. Each member gets **3 per week** (rolling 7 days, counted per member). Can't target yourself, bots, admins, or anyone already timed out, and a failed attempt doesn't use one up. It doesn't add to anyone's offense count, but it shows on the dashboard. |
+| `/settleargument [topic] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. `topic` is optional and helps it focus. Once per channel every 30 seconds. |
+
+`/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. Tune both commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
+
+### For mods
 
 Only people with the **Timeout Members** permission can use these.
 
@@ -116,6 +127,87 @@ Only people with the **Timeout Members** permission can use these.
 | `/spreader resetall` | Resets everyone's offense count in the server |
 | `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |
 
+## Run it 24/7 for free
+
+The most reliable free option is Google Cloud's **Always Free e2-micro** VM: a small Linux server that stays on all the time, free within the limits below. Google asks for a card to verify you, but doesn't charge if you stay inside the free tier.
+
+The free tier covers exactly **one** e2-micro in **us-west1, us-central1 or us-east1** with a standard disk of up to 30 GB. A VM in any other region, a bigger machine, or a second VM is billed.
+
+### 1. Create the VM
+
+1. Sign in at [console.cloud.google.com](https://console.cloud.google.com), create a project, and turn on billing (needed even for the free tier).
+2. Go to **Compute Engine → VM instances → Create instance**.
+3. Set **Region** to `us-central1` (or us-west1 / us-east1), **Machine type** to `e2-micro`, and under **Boot disk** pick **Debian 12** with a **Standard persistent disk**, 10–30 GB.
+4. Click **Create**, then click **SSH** next to the VM to open a terminal in your browser.
+
+### 2. Install the bot
+
+In the VM's SSH window:
+
+```bash
+sudo apt update && sudo apt install -y git gh python3-venv
+gh auth login
+gh repo clone shxbainu/spamguard
+cd spamguard
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+nano .env
+```
+
+`gh auth login` is needed because the repo is private: choose GitHub.com → HTTPS → "Login with a web browser" and enter the code it shows. In `nano`, paste the contents of your `.env` from your computer, then save with **Ctrl+O**, **Enter**, **Ctrl+X**.
+
+Stop the bot on your own computer first, so two copies aren't running at once.
+
+### 3. Keep it running
+
+This makes the bot start on boot and restart if it crashes:
+
+```bash
+sudo tee /etc/systemd/system/spreader.service > /dev/null <<EOF
+[Unit]
+Description=Ben's Butt Spreader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$USER
+WorkingDirectory=$HOME/spamguard
+ExecStart=$HOME/spamguard/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable --now spreader
+```
+
+Useful commands on the VM:
+
+| Command | Does |
+|---|---|
+| `sudo systemctl status spreader` | Is it running? |
+| `journalctl -u spreader -f` | Live logs (Ctrl+C to stop watching) |
+| `cd ~/spamguard && git pull && sudo systemctl restart spreader` | Update to the newest code |
+
+You can close the SSH window; the bot keeps running.
+
+### 4. See the dashboard
+
+The dashboard stays private on the VM. To open it, install the [gcloud CLI](https://cloud.google.com/sdk/docs/install) on your computer and run:
+
+```bash
+gcloud compute ssh YOUR_VM_NAME --zone YOUR_ZONE -- -L 8080:localhost:8080
+```
+
+While that's open, **http://localhost:8080** on your computer shows the VM's dashboard.
+
+### Other free options
+
+- **Oracle Cloud Always Free**: more powerful VMs, but sign-up often fails, free ARM capacity is often unavailable, and Oracle can reclaim VMs it considers idle.
+- **Free Discord bot hosts** (for example bot-hosting.net): no card, but small (around 256 MB of RAM), many need you to click "renew" every few days, there's no dashboard access, and you're handing your bot token to a small company you don't know.
+- **An always-on device at home**: an old laptop or a Raspberry Pi, set up the same way as the VM.
+
 ## Tests
 
 ```bash
@@ -124,9 +216,9 @@ python -m unittest -v
 
 ## Files
 
-- `bot.py`: Discord events, punishments, slash commands
+- `bot.py`: Discord events, punishments, slash commands (including `/shutup` and `/settleargument`)
 - `detectors.py`: GIF, repeat and strike logic
 - `escalation.py`: the punishment ladder
-- `judge.py`: the AI "is this contributing?" check (Gemini or Claude)
-- `storage.py`: SQLite history and offense counts
+- `judge.py`: the AI "is this contributing?" check and argument settling (Gemini or Claude)
+- `storage.py`: SQLite history, offense counts and /shutup uses
 - `dashboard.py`, `dashboard.html`: the web dashboard

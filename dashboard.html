@@ -94,6 +94,7 @@
         <option value="gif">GIF spam</option>
         <option value="repeat">Repeating</option>
         <option value="ai">Not contributing (AI)</option>
+        <option value="shutup">/shutup</option>
       </select>
       <select id="action">
         <option value="">All actions</option>
@@ -112,7 +113,7 @@
 </main>
 
 <script>
-const CATEGORY = { gif: "GIF spam", repeat: "Repeating", ai: "Not contributing" };
+const CATEGORY = { gif: "GIF spam", repeat: "Repeating", ai: "Not contributing", shutup: "/shutup" };
 const $ = (id) => document.getElementById(id);
 
 function esc(value) {
@@ -187,7 +188,7 @@ async function load() {
         <td title="${esc(new Date(p.created_at * 1000).toLocaleString())}">${ago(p.created_at)}</td>
         <td>${esc(p.user_name)}<div class="muted">${esc(p.user_id)}</div></td>
         <td>${punishmentBadge(p)}</td>
-        <td>#${p.offense}</td>
+        <td>${p.offense ? `#${p.offense}` : "–"}</td>
         <td><span class="chip">${esc(CATEGORY[p.category] || p.category)}</span> ${esc(p.reason)}
           ${p.evidence ? `<div class="evidence">${esc(p.evidence)}</div>` : ""}</td>
         <td>${p.channel_name ? "#" + esc(p.channel_name) : ""}</td>

@@ -63,6 +63,15 @@ class StoreTests(unittest.TestCase):
         self.store.forgive_all(guild_id=1)
         self.assertEqual([o["user_id"] for o in self.store.active_offenders(now=20, reset_after=3 * DAY)], [9])
 
+    def test_shutups_used_in_last_week(self):
+        week = 7 * DAY
+        for t in (0, 10, 20):
+            self.store.record_shutup(1, 7, 8, now=t)
+        self.store.record_shutup(2, 7, 8, now=20)
+        self.assertEqual(self.store.shutups_used(1, 7, now=30, window=week), [0, 10, 20], "per server")
+        self.assertEqual(self.store.shutups_used(1, 8, now=30, window=week), [], "per user")
+        self.assertEqual(self.store.shutups_used(1, 7, now=week + 5, window=week), [10, 20], "oldest one expired")
+
     def record(self, **overrides):
         fields = dict(guild_id=1, user_id=7, user_name="dave", channel_name="general", action="timeout",
                       duration_seconds=30, offense=1, category="gif", reason="GIF spam", evidence="4 GIFs")
@@ -82,7 +91,7 @@ class StoreTests(unittest.TestCase):
 
         stats = self.store.stats(now=3000)
         self.assertEqual((stats["total"], stats["timeouts"], stats["kicks"]), (3, 2, 1))
-        self.assertEqual(stats["by_category"], {"gif": 1, "repeat": 1, "ai": 1})
+        self.assertEqual(stats["by_category"], {"gif": 1, "repeat": 1, "ai": 1, "shutup": 0})
         self.assertEqual(stats["top_users_7d"][0], {"user_id": 7, "user_name": "dave", "count": 2})
 
 

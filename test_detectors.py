@@ -139,6 +139,22 @@ class JudgeTests(unittest.TestCase):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("not json"))
         self.assertIsNone(asyncio.run(judge.judge("dave", CONTEXT, "hi")))
 
+    def test_claude_settles_argument(self):
+        ruling = {"topic": "Is a hot dog a sandwich?", "sides": [{"who": "amy", "position": "yes"}, {"who": "dave", "position": "no"}],
+                  "winner": "amy", "verdict": "Technically yes.", "reasoning": "Bread around filling.", "facts": ["USDA says so"]}
+        messages = FakeMessages(ruling)
+        judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
+        result = asyncio.run(judge.settle([("amy", "hot dog is a sandwich"), ("dave", "no way")], topic="hot dogs"))
+        self.assertEqual((result.winner, result.facts), ("amy", ["USDA says so"]))
+        prompt = messages.last_kwargs["messages"][0]["content"]
+        self.assertIn("dave: no way", prompt)
+        self.assertIn("about: hot dogs", prompt)
+        self.assertIn("settle arguments", messages.last_kwargs["system"])
+
+    def test_gemini_settle_with_bad_answer_gives_none(self):
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(json.dumps({"verdict": "ok"})))
+        self.assertIsNone(asyncio.run(judge.settle([("amy", "pineapple belongs on pizza")])))
+
     def test_make_judge_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
             make_judge("openai")

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS punishments (
     action TEXT NOT NULL,            -- timeout, kick, or failed
     duration_seconds INTEGER NOT NULL,
     offense INTEGER NOT NULL,
-    category TEXT NOT NULL,          -- gif, repeat, or ai
+    category TEXT NOT NULL,          -- gif, repeat, ai, or shutup
     reason TEXT NOT NULL,
     evidence TEXT
 );
@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS offenders (
     offenses INTEGER NOT NULL,
     last_offense REAL NOT NULL,
     PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS shutups (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,        -- who ran /shutup
+    target_id INTEGER NOT NULL,
+    created_at REAL NOT NULL
 );
 """
 
@@ -79,6 +85,23 @@ class Store:
             (now - reset_after,),
         )
         return [dict(row, resets_at=row["last_offense"] + reset_after) for row in rows]
+
+    # ---- /shutup allowance ---------------------------------------------------
+
+    def shutups_used(self, guild_id: int, user_id: int, now: float, window: float) -> list[float]:
+        """Times this member used /shutup within the last `window` seconds, oldest first."""
+        rows = self.db.execute(
+            "SELECT created_at FROM shutups WHERE guild_id = ? AND user_id = ? AND created_at > ? ORDER BY created_at",
+            (guild_id, user_id, now - window),
+        )
+        return [row[0] for row in rows]
+
+    def record_shutup(self, guild_id: int, user_id: int, target_id: int, now: float) -> None:
+        self.db.execute(
+            "INSERT INTO shutups (guild_id, user_id, target_id, created_at) VALUES (?, ?, ?, ?)",
+            (guild_id, user_id, target_id, now),
+        )
+        self.db.commit()
 
     # ---- punishment history ------------------------------------------------
 
@@ -142,6 +165,6 @@ class Store:
             "last_24h": count("created_at >= ?", day_ago),
             "timeouts": count("action = 'timeout'"),
             "kicks": count("action = 'kick'"),
-            "by_category": {c: count("category = ?", c) for c in ("gif", "repeat", "ai")},
+            "by_category": {c: count("category = ?", c) for c in ("gif", "repeat", "ai", "shutup")},
             "top_users_7d": [dict(row) for row in top],
         }
