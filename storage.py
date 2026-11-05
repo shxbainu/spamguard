@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS shutups (
     target_id INTEGER NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,            -- e.g. persona:<guild_id>
+    value TEXT NOT NULL
+);
 """
 
 
@@ -101,6 +105,23 @@ class Store:
             "INSERT INTO shutups (guild_id, user_id, target_id, created_at) VALUES (?, ?, ?, ?)",
             (guild_id, user_id, target_id, now),
         )
+        self.db.commit()
+
+    # ---- settings ------------------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str | None) -> None:
+        """Saves a setting; None deletes it."""
+        if value is None:
+            self.db.execute("DELETE FROM settings WHERE key = ?", (key,))
+        else:
+            self.db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
         self.db.commit()
 
     # ---- punishment history ------------------------------------------------

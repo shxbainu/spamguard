@@ -72,6 +72,14 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.shutups_used(1, 8, now=30, window=week), [], "per user")
         self.assertEqual(self.store.shutups_used(1, 7, now=week + 5, window=week), [10, 20], "oldest one expired")
 
+    def test_settings(self):
+        self.assertIsNone(self.store.get_setting("persona:1"))
+        self.store.set_setting("persona:1", "a pirate")
+        self.store.set_setting("persona:1", "a cowboy")
+        self.assertEqual(self.store.get_setting("persona:1"), "a cowboy")
+        self.store.set_setting("persona:1", None)
+        self.assertIsNone(self.store.get_setting("persona:1"))
+
     def record(self, **overrides):
         fields = dict(guild_id=1, user_id=7, user_name="dave", channel_name="general", action="timeout",
                       duration_seconds=30, offense=1, category="gif", reason="GIF spam", evidence="4 GIFs")

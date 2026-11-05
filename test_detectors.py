@@ -3,8 +3,8 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from detectors import GifSpamDetector, MsgRef, RepeatDetector, StrikeTracker, looks_like_gif
-from judge import ClaudeJudge, GeminiJudge, make_judge
+from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
+from judge import ClaudeJudge, GeminiJudge, OpenAICompatibleJudge, make_judge
 
 
 def ref(n: int) -> MsgRef:
@@ -141,23 +141,84 @@ class JudgeTests(unittest.TestCase):
 
     def test_claude_settles_argument(self):
         ruling = {"topic": "Is a hot dog a sandwich?", "sides": [{"who": "amy", "position": "yes"}, {"who": "dave", "position": "no"}],
-                  "winner": "amy", "verdict": "Technically yes.", "reasoning": "Bread around filling.", "facts": ["USDA says so"]}
+                  "winner": "amy", "verdict": "Technically yes.", "reasoning": "Bread around filling.", "facts": ["USDA says so"],
+                  "reply": "Arr, amy wins this one."}
         messages = FakeMessages(ruling)
         judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
-        result = asyncio.run(judge.settle([("amy", "hot dog is a sandwich"), ("dave", "no way")], topic="hot dogs"))
-        self.assertEqual((result.winner, result.facts), ("amy", ["USDA says so"]))
+        transcript = [("amy", "hot dog is a sandwich"), ("dave", "no way")]
+        result = asyncio.run(judge.settle(transcript, "amy", comment="tell dave he's wrong", persona="a pirate"))
+        self.assertEqual((result.winner, result.reply), ("amy", "Arr, amy wins this one."))
         prompt = messages.last_kwargs["messages"][0]["content"]
         self.assertIn("dave: no way", prompt)
-        self.assertIn("about: hot dogs", prompt)
-        self.assertIn("settle arguments", messages.last_kwargs["system"])
+        self.assertIn("amy asked you", prompt)
+        self.assertIn("tell dave he's wrong", prompt)
+        self.assertIn("a pirate", messages.last_kwargs["system"])
 
     def test_gemini_settle_with_bad_answer_gives_none(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(json.dumps({"verdict": "ok"})))
-        self.assertIsNone(asyncio.run(judge.settle([("amy", "pineapple belongs on pizza")])))
+        self.assertIsNone(asyncio.run(judge.settle([("amy", "pineapple belongs on pizza")], "amy")))
+
+    def test_gemini_chat_is_plain_text(self):
+        fake = FakeGemini("lmao imagine")
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=fake)
+        reply = asyncio.run(judge.chat("Spreader", "a pirate", CONTEXT, "amy"))
+        self.assertEqual(reply, "lmao imagine")
+        self.assertIsNone(fake.last_kwargs["config"].response_mime_type)
+        self.assertIn("a pirate", fake.last_kwargs["config"].system_instruction)
 
     def test_make_judge_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
             make_judge("openai")
+
+
+
+class FakeCompletions:
+    def __init__(self, content=None, error=None):
+        self.content = content
+        self.error = error
+        self.last_kwargs = None
+
+    async def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        if self.error:
+            raise self.error
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))])
+
+
+def groq_judge(completions):
+    return OpenAICompatibleJudge("groq", "openai/gpt-oss-120b", client=SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+
+
+class OpenAICompatibleTests(unittest.TestCase):
+    def test_verdict_uses_json_schema(self):
+        fake = FakeCompletions(json.dumps({"verdict": "low_effort", "reason": "mash"}))
+        verdict = asyncio.run(groq_judge(fake).judge("dave", CONTEXT, "asdfgh"))
+        self.assertEqual(verdict.verdict, "low_effort")
+        self.assertEqual(fake.last_kwargs["response_format"]["type"], "json_schema")
+        self.assertEqual(fake.last_kwargs["messages"][0]["role"], "system")
+        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["messages"][1]["content"])
+
+    def test_chat_strips_thinking_and_skips_json(self):
+        fake = FakeCompletions("<think>they want a roast</think>\nskill issue tbh")
+        reply = asyncio.run(groq_judge(fake).chat("Spreader", "a gremlin", CONTEXT + [("dave", "roast me")], "dave"))
+        self.assertEqual(reply, "skill issue tbh")
+        self.assertNotIn("response_format", fake.last_kwargs)
+        self.assertIn("Reply to dave's last message", fake.last_kwargs["messages"][1]["content"])
+
+    def test_rate_limit_gives_none(self):
+        import httpx
+        import openai
+
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com"))
+        fake = FakeCompletions(error=openai.RateLimitError("slow down", response=response, body=None))
+        self.assertIsNone(asyncio.run(groq_judge(fake).chat("Spreader", "x", CONTEXT, "amy")))
+
+
+class BudgetTests(unittest.TestCase):
+    def test_per_minute_budget(self):
+        budget = PerMinuteBudget(2)
+        self.assertEqual([budget.take(0), budget.take(1), budget.take(2)], [True, True, False])
+        self.assertTrue(budget.take(61), "first use expired")
 
 
 if __name__ == "__main__":

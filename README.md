@@ -1,6 +1,6 @@
 # Ben's Butt Spreader
 
-A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened, plus two commands for everyone: `/shutup` and `/settleargument`.
+A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened, plus an AI chat with a personality you can change, and fun commands for everyone: `/shutup` and `/settleargument`.
 
 ## What counts as an offense
 
@@ -27,6 +27,31 @@ The AI must answer in a fixed JSON format with one of three verdicts plus a shor
 - `disruptive`: trolling, baiting, or deliberately derailing.
 
 Anything other than `ok` is a **strike**. A single strike does nothing; 3 strikes within 10 minutes is one offense. That way one misjudged message never gets anyone punished. If the AI can't be reached, gives a broken answer, or the per-minute cap is hit, the message is just skipped.
+
+## AI chat
+
+The bot chats in character:
+
+- **In one channel you pick** (`CHAT_CHANNEL_ID`), it replies to **every** message. That channel is for messing around, so it's never checked for spam.
+- **In any other channel**, it replies when someone **@mentions** it or **replies** to one of its messages.
+
+It sees the last 15 messages in the channel, including its own replies, so it can follow the conversation. Change who it is with `/persona set`; the personality is saved per server and survives restarts.
+
+Limits so it can't spam or burn through the free tier: it answers each person at most once every 4 seconds (`CHAT_COOLDOWN_SECONDS`), and sends at most 20 replies a minute across the server (`CHAT_MAX_PER_MINUTE`, shared with `/settleargument`). Messages that arrive while it's at a limit just don't get an answer. Its replies can never ping anyone, so it can't `@everyone`.
+
+### Which AI does what
+
+Each job can use a different AI, and each provider has its own free allowance, so splitting them stretches the free tiers further:
+
+| Job | Setting | Default in `.env.example` | Why |
+|---|---|---|---|
+| Spam and "not contributing" checks | `AI_PROVIDER` / `AI_MODEL` | Gemini Flash-Lite | Many small, simple checks |
+| `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b` | The best free reasoning model |
+| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `qwen/qwen3.8-27b` | Good at playing a personality; a separate model from settling, so it has its own daily limit |
+
+Providers: `gemini`, `groq`, `openrouter` (free models, but only 50 requests a day unless you've bought $10 of credit) and `claude` (paid). If a provider's key is missing, the feature that needs it turns off and the bot logs a warning; the rest keeps working.
+
+Groq's Qwen model is marked "preview" and could be removed. If the chat stops answering and the log shows a Groq error about the model, set `CHAT_MODEL=openai/gpt-oss-120b`.
 
 ## Punishment ladder
 
@@ -86,6 +111,14 @@ The free tier has per-minute and daily limits. The bot caps itself at 12 AI chec
 
 Alternatives: `AI_PROVIDER=claude` with an `ANTHROPIC_API_KEY` uses Claude Haiku instead (paid API credit, about $1 per 10,000 messages; a Claude Pro subscription doesn't cover it), or `AI_ENABLED=false` turns the AI check off.
 
+### 3b. Get a free Groq API key (for chat and /settleargument)
+
+1. Go to [console.groq.com](https://console.groq.com) and sign in with Google or GitHub. No card needed.
+2. Click **API Keys → Create API Key** and copy it right away; Groq only shows it once.
+3. Put it in `.env` as `GROQ_API_KEY`.
+
+The free tier allows about 30 requests a minute and 1,000 a day per model; your exact limits are under **Settings → Limits** in the Groq console.
+
 ### 4. Configure and run
 
 Needs Python 3.10 or newer (`brew install python@3.12` on a Mac).
@@ -97,7 +130,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env`: paste your `DISCORD_TOKEN` and `GEMINI_API_KEY`, and your server ID as `GUILD_ID` (turn on **Settings → Advanced → Developer Mode**, then right-click the server icon → **Copy Server ID**). Every other setting is explained in `.env.example`. Then:
+Edit `.env`: paste your `DISCORD_TOKEN`, `GEMINI_API_KEY` and `GROQ_API_KEY`. For IDs, turn on **Settings → Advanced → Developer Mode** in Discord, then:
+
+- `GUILD_ID`: right-click the server icon → **Copy Server ID**
+- `CHAT_CHANNEL_ID`: right-click the channel the AI should chat in → **Copy Channel ID**
+
+Every other setting is explained in `.env.example`. Then:
 
 ```bash
 python bot.py
@@ -112,9 +150,12 @@ The bot only works while it's running. To keep it online without your computer, 
 | Command | Does |
 |---|---|
 | `/shutup @user` | Times them out for 10 seconds. Each member gets **3 per week** (rolling 7 days, counted per member). Can't target yourself, bots, admins, or anyone already timed out, and a failed attempt doesn't use one up. It doesn't add to anyone's offense count, but it shows on the dashboard. |
-| `/settleargument [topic] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. `topic` is optional and helps it focus. Once per channel every 30 seconds. |
+| `/settleargument [comment] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. Leave a `comment` ("tell Dave he's wrong") and it answers you directly, in its current personality. Once per channel every 30 seconds. |
+| `/persona show` | Shows the AI chat's current personality |
+| `/persona set <personality>` | Changes it, e.g. "a pirate who thinks everything is a government conspiracy". Mods only, unless `PERSONA_ANYONE=true`. |
+| `/persona reset` | Back to the default personality (mods only by default) |
 
-`/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. Tune both commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
+`/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. Its personality changes the wording, not who wins. Tune the commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
 
 ### For mods
 
@@ -216,9 +257,9 @@ python -m unittest -v
 
 ## Files
 
-- `bot.py`: Discord events, punishments, slash commands (including `/shutup` and `/settleargument`)
+- `bot.py`: Discord events, punishments, AI chat replies, slash commands
 - `detectors.py`: GIF, repeat and strike logic
 - `escalation.py`: the punishment ladder
-- `judge.py`: the AI "is this contributing?" check and argument settling (Gemini or Claude)
-- `storage.py`: SQLite history, offense counts and /shutup uses
+- `judge.py`: everything that talks to the AI (Gemini, Groq, OpenRouter or Claude): the "is this contributing?" check, argument settling and chat
+- `storage.py`: SQLite history, offense counts, /shutup uses and the saved personality
 - `dashboard.py`, `dashboard.html`: the web dashboard

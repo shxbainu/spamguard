@@ -1,6 +1,6 @@
 """Ben's Butt Spreader (SpamGuard): watches every member for GIF spam, repeated messages and low-effort
-noise, and punishes repeat offenders with escalating timeouts that end in a kick. Also has /shutup and
-/settleargument for everyone."""
+noise, and punishes repeat offenders with escalating timeouts that end in a kick. Also chats in character
+in one channel and when mentioned, and has /shutup, /settleargument and /persona."""
 from __future__ import annotations
 
 import asyncio
@@ -17,9 +17,9 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from dashboard import start_dashboard
-from detectors import GifSpamDetector, MsgRef, RepeatDetector, StrikeTracker, looks_like_gif
+from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
-from judge import make_judge
+from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, make_judge
 from storage import Store
 
 load_dotenv()
@@ -57,13 +57,25 @@ REPEAT_LIMIT = env_int("REPEAT_LIMIT", 3)
 REPEAT_WINDOW_SECONDS = env_int("REPEAT_WINDOW_SECONDS", 120)
 
 AI_ENABLED = env_bool("AI_ENABLED", True)
-AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()  # "gemini" (free tier) or "claude"
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()  # gemini, groq, openrouter or claude
 AI_MODEL = os.getenv("AI_MODEL", "").strip() or None  # empty = provider default
 AI_STRIKES = env_int("AI_STRIKES", 3)
 AI_STRIKE_WINDOW_SECONDS = env_int("AI_STRIKE_WINDOW_SECONDS", 600)
 AI_MAX_PER_MINUTE = env_int("AI_MAX_PER_MINUTE", 12)
 AI_MIN_LENGTH = env_int("AI_MIN_LENGTH", 3)
 CONTEXT_MESSAGES = env_int("CONTEXT_MESSAGES", 15)
+
+# /settleargument and the chat each pick their own AI; empty means the same as the one before.
+SETTLE_PROVIDER = (os.getenv("SETTLE_PROVIDER") or AI_PROVIDER).strip().lower()
+SETTLE_MODEL = os.getenv("SETTLE_MODEL", "").strip() or None
+CHAT_ENABLED = env_bool("CHAT_ENABLED", True)
+CHAT_PROVIDER = (os.getenv("CHAT_PROVIDER") or SETTLE_PROVIDER).strip().lower()
+CHAT_MODEL = os.getenv("CHAT_MODEL", "").strip() or None
+CHAT_CHANNEL_ID = env_int("CHAT_CHANNEL_ID", 0)
+CHAT_COOLDOWN_SECONDS = env_int("CHAT_COOLDOWN_SECONDS", 4)
+CHAT_MAX_PER_MINUTE = env_int("CHAT_MAX_PER_MINUTE", 20)
+PERSONA = os.getenv("PERSONA", "").strip() or DEFAULT_PERSONA
+PERSONA_ANYONE = env_bool("PERSONA_ANYONE", False)
 
 SHUTUP_PER_WEEK = env_int("SHUTUP_PER_WEEK", 3)
 SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
@@ -94,7 +106,11 @@ class SpamGuard(discord.Client):
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
         self.judge = make_judge(AI_PROVIDER, AI_MODEL) if AI_ENABLED else None
-        self.ai_calls: deque[float] = deque()
+        self.settler = optional_judge(SETTLE_PROVIDER, SETTLE_MODEL, "/settleargument")
+        self.chatter = optional_judge(CHAT_PROVIDER, CHAT_MODEL, "the AI chat") if CHAT_ENABLED else None
+        self.ai_budget = PerMinuteBudget(AI_MAX_PER_MINUTE)
+        self.chat_budget = PerMinuteBudget(CHAT_MAX_PER_MINUTE)  # chat replies and /settleargument
+        self.last_reply: dict[int, float] = {}  # user id -> monotonic time the bot last answered them
 
         # Recent messages per channel, used as context for the AI judge.
         self.history: dict[int, deque[tuple[str, str]]] = defaultdict(lambda: deque(maxlen=CONTEXT_MESSAGES))
@@ -108,7 +124,7 @@ class SpamGuard(discord.Client):
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
-        for command in (spamguard_commands, shutup_cmd, settle_cmd):
+        for command in (spamguard_commands, shutup_cmd, settle_cmd, persona_commands):
             self.tree.add_command(command)
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
@@ -129,9 +145,12 @@ class SpamGuard(discord.Client):
         await super().close()
 
     async def on_ready(self) -> None:
-        ai = f"{AI_PROVIDER} ({self.judge.model})" if self.judge else "off"
+        def describe(judge: Judge | None) -> str:
+            return judge.model if judge else "off"
+
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
-        log.info("Logged in as %s. AI=%s. Punishments: %s", self.user, ai, ladder)
+        log.info("Logged in as %s. Punishments: %s", self.user, ladder)
+        log.info("AI: moderation=%s, settle=%s, chat=%s", describe(self.judge), describe(self.settler), describe(self.chatter))
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
@@ -168,23 +187,17 @@ class SpamGuard(discord.Client):
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
 
-    def ai_budget_available(self) -> bool:
-        """Keeps AI calls under AI_MAX_PER_MINUTE so the free tier isn't exceeded."""
-        now = time.monotonic()
-        while self.ai_calls and now - self.ai_calls[0] > 60:
-            self.ai_calls.popleft()
-        if len(self.ai_calls) >= AI_MAX_PER_MINUTE:
-            return False
-        self.ai_calls.append(now)
-        return True
+    def spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def persona(self, guild_id: int) -> str:
+        return self.store.get_setting(f"persona:{guild_id}") or PERSONA
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or not isinstance(message.author, discord.Member):
             return
-        channel_id = message.channel.id
-        if (WATCH_CHANNEL_IDS and channel_id not in WATCH_CHANNEL_IDS) or channel_id in IGNORE_CHANNEL_IDS:
-            return
-
         text = message.clean_content
         is_gif = looks_like_gif(
             text,
@@ -192,10 +205,20 @@ class SpamGuard(discord.Client):
             embeds=[(e.type, e.url) for e in message.embeds],
             sticker_count=len(message.stickers),
         )
-        history = self.history[channel_id]
+        history = self.history[message.channel.id]
         context = list(history)
         history.append((message.author.display_name, "[GIF]" if is_gif else text or "[attachment]"))
 
+        in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
+        if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
+            await self.moderate(message, text, is_gif, context)
+        if self.wants_reply(message, in_chat_channel):
+            self.spawn(self.chat_reply(message))
+
+    async def moderate(self, message: discord.Message, text: str, is_gif: bool, context: list[tuple[str, str]]) -> None:
+        channel_id = message.channel.id
+        if (WATCH_CHANNEL_IDS and channel_id not in WATCH_CHANNEL_IDS) or channel_id in IGNORE_CHANNEL_IDS:
+            return
         member = message.author
         if self.is_exempt(member) or self.remaining_penalty(message.guild.id, member.id):
             return
@@ -211,10 +234,43 @@ class SpamGuard(discord.Client):
             reason = f"Repeated the same message {len(refs)} times"
             await self.punish(message, "repeat", reason, text[:300], refs)
             return
-        if self.judge and not is_gif and len(text.strip()) >= AI_MIN_LENGTH and self.ai_budget_available():
-            task = asyncio.create_task(self.check_contribution(message, context, text))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+        if self.judge and not is_gif and len(text.strip()) >= AI_MIN_LENGTH and self.ai_budget.take(now):
+            self.spawn(self.check_contribution(message, context, text))
+
+    # ---- AI chat -----------------------------------------------------------
+
+    def wants_reply(self, message: discord.Message, in_chat_channel: bool) -> bool:
+        """Answer everything in the chat channel, and mentions or replies to the bot anywhere."""
+        if self.chatter is None:
+            return False
+        ref = message.reference
+        replied_to_bot = ref is not None and isinstance(ref.resolved, discord.Message) and ref.resolved.author == self.user
+        if not (in_chat_channel or self.user in message.mentions or replied_to_bot):
+            return False
+        if self.remaining_penalty(message.guild.id, message.author.id):
+            return False
+        now = time.monotonic()
+        if now - self.last_reply.get(message.author.id, -CHAT_COOLDOWN_SECONDS) < CHAT_COOLDOWN_SECONDS:
+            return False
+        if not self.chat_budget.take(now):
+            return False
+        self.last_reply[message.author.id] = now
+        return True
+
+    async def chat_reply(self, message: discord.Message) -> None:
+        history = self.history[message.channel.id]
+        name = message.guild.me.display_name
+        try:
+            async with message.channel.typing():
+                text = await self.chatter.chat(name, self.persona(message.guild.id), list(history), message.author.display_name)
+            if not text:
+                return
+            # No pings from the AI, ever (it can't @everyone or mention people).
+            await message.reply(text[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException as e:
+            log.warning("Couldn't send a chat reply in #%s: %s", getattr(message.channel, "name", "?"), e)
+            return
+        history.append((name, text))
 
     async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
         verdict = await self.judge.judge(message.author.display_name, context, text)
@@ -419,19 +475,22 @@ async def shutup_cmd(interaction: discord.Interaction, user: discord.Member) -> 
 
 
 @app_commands.command(name="settleargument", description="The AI reads the argument in this channel and decides who's right")
-@app_commands.describe(topic="What the argument is about (optional, helps the AI)", messages="How many recent messages to read (default 50)")
+@app_commands.describe(
+    comment="Anything you want to say to the bot about it, e.g. 'tell Dave he's wrong'",
+    messages="How many recent messages to read (default 50)",
+)
 @app_commands.guild_only()
 @app_commands.checks.cooldown(1, SETTLE_COOLDOWN_SECONDS, key=lambda i: i.channel_id)
 async def settle_cmd(
     interaction: discord.Interaction,
-    topic: Optional[str] = None,
+    comment: Optional[str] = None,
     messages: app_commands.Range[int, 5, 100] = 50,
 ) -> None:
     bot: SpamGuard = interaction.client
-    if bot.judge is None:
-        await interaction.response.send_message("The AI is turned off (AI_ENABLED=false).", ephemeral=True)
+    if bot.settler is None:
+        await interaction.response.send_message("/settleargument isn't set up: its AI provider has no API key.", ephemeral=True)
         return
-    if not bot.ai_budget_available():
+    if not bot.chat_budget.take(time.monotonic()):
         await interaction.response.send_message("The AI is busy right now, try again in a minute.", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
@@ -445,7 +504,7 @@ async def settle_cmd(
     if not transcript:
         await interaction.followup.send("There's nothing here to settle.")
         return
-    ruling = await bot.judge.settle(transcript, topic)
+    ruling = await bot.settler.settle(transcript, interaction.user.display_name, comment, bot.persona(interaction.guild_id))
     if ruling is None:
         await interaction.followup.send("The AI couldn't be reached. Try again in a minute.")
         return
@@ -457,16 +516,64 @@ async def settle_cmd(
     embed.add_field(name="Why", value=(ruling.reasoning or "–")[:1024], inline=False)
     if ruling.facts:
         embed.add_field(name="Facts", value="\n".join(f"• {fact}" for fact in ruling.facts[:4])[:1024], inline=False)
-    embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.judge.model} · AI can be wrong")
-    await interaction.followup.send(embed=embed)
+    embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.settler.model} · AI can be wrong")
+    said = f"> {comment[:300]}\n" if comment else ""
+    await interaction.followup.send(
+        f"{said}{ruling.reply}"[:2000], embed=embed, allowed_mentions=discord.AllowedMentions.none(),
+    )
+
+
+persona_commands = app_commands.Group(name="persona", description="The AI chat personality", guild_only=True)
+
+
+def can_change_persona(member: discord.Member) -> bool:
+    return PERSONA_ANYONE or member.guild_permissions.moderate_members
+
+
+@persona_commands.command(name="set", description="Change who the bot is when it chats")
+@app_commands.describe(personality="e.g. 'a pirate who thinks everything is a government conspiracy'")
+async def persona_set_cmd(interaction: discord.Interaction, personality: app_commands.Range[str, 3, 1000]) -> None:
+    bot: SpamGuard = interaction.client
+    if not can_change_persona(interaction.user):
+        await interaction.response.send_message("Only mods can change my personality.", ephemeral=True)
+        return
+    bot.store.set_setting(f"persona:{interaction.guild_id}", personality)
+    await interaction.response.send_message(
+        f"🎭 {interaction.user.mention} changed my personality to: {personality}", allowed_mentions=discord.AllowedMentions.none(),
+    )
+
+
+@persona_commands.command(name="show", description="See the bot's current personality")
+async def persona_show_cmd(interaction: discord.Interaction) -> None:
+    bot: SpamGuard = interaction.client
+    await interaction.response.send_message(f"My personality right now: {bot.persona(interaction.guild_id)}", ephemeral=True)
+
+
+@persona_commands.command(name="reset", description="Go back to the default personality")
+async def persona_reset_cmd(interaction: discord.Interaction) -> None:
+    bot: SpamGuard = interaction.client
+    if not can_change_persona(interaction.user):
+        await interaction.response.send_message("Only mods can change my personality.", ephemeral=True)
+        return
+    bot.store.set_setting(f"persona:{interaction.guild_id}", None)
+    await interaction.response.send_message(f"🎭 Back to my default personality: {PERSONA}")
+
+
+def optional_judge(provider: str, model: str | None, feature: str) -> Judge | None:
+    """An AI for an optional feature, or None (feature off) when its provider has no API key."""
+    if not os.getenv(API_KEYS[provider]):
+        log.warning("No %s set, so %s is off", API_KEYS[provider], feature)
+        return None
+    return make_judge(provider, model)
 
 
 def main() -> None:
     if not TOKEN:
         raise SystemExit("Set DISCORD_TOKEN in .env (see .env.example)")
-    key_name = {"gemini": "GEMINI_API_KEY", "claude": "ANTHROPIC_API_KEY"}.get(AI_PROVIDER)
-    if AI_ENABLED and key_name is None:
-        raise SystemExit("AI_PROVIDER must be 'gemini' or 'claude'")
+    for setting, provider in (("AI_PROVIDER", AI_PROVIDER), ("SETTLE_PROVIDER", SETTLE_PROVIDER), ("CHAT_PROVIDER", CHAT_PROVIDER)):
+        if provider not in DEFAULT_MODELS:
+            raise SystemExit(f"{setting} must be one of: {', '.join(DEFAULT_MODELS)}")
+    key_name = API_KEYS[AI_PROVIDER]
     if AI_ENABLED and not os.getenv(key_name):
         raise SystemExit(f"Set {key_name} in .env, or AI_ENABLED=false to run without the AI check")
     SpamGuard().run(TOKEN, root_logger=True)

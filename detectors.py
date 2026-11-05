@@ -128,3 +128,19 @@ class StrikeTracker:
 
     def reset(self, user_id: int) -> None:
         self._strikes.pop(user_id, None)
+
+
+class PerMinuteBudget:
+    """Allows at most `limit` uses in any 60-second span, to stay inside an AI provider's free tier."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.uses: deque[float] = deque()
+
+    def take(self, now: float) -> bool:
+        while self.uses and now - self.uses[0] > 60:
+            self.uses.popleft()
+        if len(self.uses) >= self.limit:
+            return False
+        self.uses.append(now)
+        return True
