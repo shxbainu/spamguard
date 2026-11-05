@@ -8,6 +8,7 @@ Providers:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -106,6 +107,12 @@ OPENAI_COMPATIBLE_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
 }
 
+# Groq: less "thinking" means fewer tokens counted against the free per-minute limit.
+# Chat doesn't need reasoning at all; judging and settling get a little.
+GROQ_REASONING_EFFORT = {"qwen/": "none", "openai/gpt-oss": "low"}
+# Wait and retry once when a rate limit clears within this many seconds.
+MAX_RETRY_WAIT = 15
+
 MAX_CHARS_PER_MESSAGE = 300
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -191,7 +198,7 @@ class Judge:
 
     async def judge(self, author: str, context: list[tuple[str, str]], message: str) -> Verdict | None:
         """Returns a Verdict, or None if the model couldn't be reached or declined."""
-        answer = await self.complete(SYSTEM_PROMPT, build_prompt(author, context, message), VERDICT_SCHEMA, 2048)
+        answer = await self.complete(SYSTEM_PROMPT, build_prompt(author, context, message), VERDICT_SCHEMA, 1024)
         return parse_verdict(clean_reply(answer))
 
     async def settle(
@@ -199,13 +206,13 @@ class Judge:
     ) -> Ruling | None:
         """Returns a Ruling on the argument in `transcript`, or None if the model couldn't be reached."""
         system = SETTLE_PROMPT.format(persona=persona)
-        answer = await self.complete(system, build_settle_prompt(transcript, asker, comment), SETTLE_SCHEMA, 4096)
+        answer = await self.complete(system, build_settle_prompt(transcript, asker, comment), SETTLE_SCHEMA, 2048)
         return parse_ruling(clean_reply(answer))
 
     async def chat(self, name: str, persona: str, history: list[tuple[str, str]], author: str) -> str | None:
         """An in-character reply to the last message in `history`, or None if the model couldn't be reached."""
         system = CHAT_PROMPT.format(name=name, persona=persona)
-        return clean_reply(await self.complete(system, build_chat_prompt(history, author), None, 2048))
+        return clean_reply(await self.complete(system, build_chat_prompt(history, author), None, 512))
 
 
 class ClaudeJudge(Judge):
@@ -283,24 +290,38 @@ class OpenAICompatibleJudge(Judge):
         self.provider = provider
         self.model = model
         self.client = client or openai.AsyncOpenAI(
-            base_url=OPENAI_COMPATIBLE_URLS[provider], api_key=os.getenv(API_KEYS[provider]),
+            base_url=OPENAI_COMPATIBLE_URLS[provider], api_key=os.getenv(API_KEYS[provider]), max_retries=0,
         )
+        self.extra = {}
+        if provider == "groq":
+            effort = next((e for prefix, e in GROQ_REASONING_EFFORT.items() if model.startswith(prefix)), None)
+            if effort:
+                self.extra["reasoning_effort"] = effort
 
     async def complete(self, system: str, prompt: str, schema: dict | None, max_tokens: int) -> str | None:
         openai = self._openai
-        extra = {}
+        extra = dict(self.extra)
         if schema is not None:
             # Best-effort schema (strict off) works on more models; the prompt also asks for JSON.
             extra["response_format"] = {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}}
+        request = dict(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            **extra,
+        )
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                **extra,
-            )
-        except openai.RateLimitError:
-            log.warning("Hit the %s rate limit; skipping", self.provider)
+            try:
+                response = await self.client.chat.completions.create(**request)
+            except openai.RateLimitError as e:
+                wait = retry_after(e)
+                if wait is None or wait > MAX_RETRY_WAIT:
+                    raise
+                log.info("%s rate limit; retrying in %.1fs", self.provider, wait)
+                await asyncio.sleep(wait)
+                response = await self.client.chat.completions.create(**request)
+        except openai.RateLimitError as e:
+            log.warning("Hit the %s rate limit, skipping: %s", self.provider, e.message)
             return None
         except openai.APIStatusError as e:
             log.error("%s API error %s: %s", self.provider, e.status_code, e.message)
@@ -311,6 +332,14 @@ class OpenAICompatibleJudge(Judge):
         if not response.choices:
             return None
         return response.choices[0].message.content
+
+
+def retry_after(error) -> float | None:
+    """Seconds the provider asked us to wait (the retry-after header), if it said."""
+    try:
+        return float(error.response.headers["retry-after"])
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def make_judge(provider: str, model: str | None = None) -> Judge:

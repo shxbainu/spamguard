@@ -173,20 +173,31 @@ class JudgeTests(unittest.TestCase):
 
 
 class FakeCompletions:
-    def __init__(self, content=None, error=None):
+    def __init__(self, content=None, error=None, fail_times=None):
         self.content = content
         self.error = error
+        self.fail_times = fail_times  # None = always fail when error is set
+        self.calls = 0
         self.last_kwargs = None
 
     async def create(self, **kwargs):
+        self.calls += 1
         self.last_kwargs = kwargs
-        if self.error:
+        if self.error and (self.fail_times is None or self.calls <= self.fail_times):
             raise self.error
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))])
 
 
-def groq_judge(completions):
-    return OpenAICompatibleJudge("groq", "openai/gpt-oss-120b", client=SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+def rate_limit(retry_after):
+    import httpx
+    import openai
+
+    response = httpx.Response(429, headers={"retry-after": retry_after}, request=httpx.Request("POST", "https://api.groq.com"))
+    return openai.RateLimitError("Rate limit reached on tokens per minute (TPM)", response=response, body=None)
+
+
+def groq_judge(completions, model="openai/gpt-oss-120b"):
+    return OpenAICompatibleJudge("groq", model, client=SimpleNamespace(chat=SimpleNamespace(completions=completions)))
 
 
 class OpenAICompatibleTests(unittest.TestCase):
@@ -206,12 +217,25 @@ class OpenAICompatibleTests(unittest.TestCase):
         self.assertIn("Reply to dave's last message", fake.last_kwargs["messages"][1]["content"])
 
     def test_rate_limit_gives_none(self):
-        import httpx
-        import openai
-
-        response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com"))
-        fake = FakeCompletions(error=openai.RateLimitError("slow down", response=response, body=None))
+        fake = FakeCompletions(error=rate_limit(retry_after="60"))
         self.assertIsNone(asyncio.run(groq_judge(fake).chat("Spreader", "x", CONTEXT, "amy")))
+        self.assertEqual(fake.calls, 1, "a long wait isn't retried")
+
+    def test_short_rate_limit_is_retried_once(self):
+        fake = FakeCompletions("ok fine", error=rate_limit(retry_after="0.01"), fail_times=1)
+        self.assertEqual(asyncio.run(groq_judge(fake).chat("Spreader", "x", CONTEXT, "amy")), "ok fine")
+        self.assertEqual(fake.calls, 2)
+
+    def test_groq_reasoning_effort_and_small_chat_budget(self):
+        fake = FakeCompletions("hi")
+        asyncio.run(groq_judge(fake, "qwen/qwen3.8-27b").chat("Spreader", "x", CONTEXT, "amy"))
+        self.assertEqual((fake.last_kwargs["reasoning_effort"], fake.last_kwargs["max_tokens"]), ("none", 512))
+        asyncio.run(groq_judge(fake).judge("dave", CONTEXT, "hi"))
+        self.assertEqual(fake.last_kwargs["reasoning_effort"], "low")
+        openrouter = OpenAICompatibleJudge("openrouter", "google/gemma-4-31b-it:free",
+                                           client=SimpleNamespace(chat=SimpleNamespace(completions=fake)))
+        asyncio.run(openrouter.chat("Spreader", "x", CONTEXT, "amy"))
+        self.assertNotIn("reasoning_effort", fake.last_kwargs, "only sent to Groq")
 
 
 class BudgetTests(unittest.TestCase):
