@@ -1,4 +1,4 @@
-"""SpamGuard: watches every member for GIF spam, repeated messages and low-effort
+"""Ben's Butt Spreader (SpamGuard): watches every member for GIF spam, repeated messages and low-effort
 noise, and punishes repeat offenders with escalating timeouts that end in a kick."""
 from __future__ import annotations
 
@@ -243,7 +243,7 @@ class SpamGuard(discord.Client):
         guild = member.guild
         self.saved_roles[(guild.id, member.id)] = [r.id for r in member.roles if not r.is_default() and not r.managed]
         invite_channel = channel.parent if isinstance(channel, discord.Thread) else channel
-        invite = await invite_channel.create_invite(max_age=24 * 3600, max_uses=5, unique=True, reason="SpamGuard kick")
+        invite = await invite_channel.create_invite(max_age=24 * 3600, max_uses=5, unique=True, reason="Ben's Butt Spreader kick")
         try:
             await member.send(
                 f"You were kicked from **{guild.name}** ({reason}).\n"
@@ -262,13 +262,13 @@ class SpamGuard(discord.Client):
                 await member.send(f"You can't rejoin **{guild.name}** for another {int(left)}s. Use the same invite after that.")
             except discord.HTTPException:
                 pass
-            await member.kick(reason="Rejoined before the SpamGuard kick ended")
+            await member.kick(reason="Rejoined before the kick ended")
             return
         role_ids = self.saved_roles.pop((guild.id, member.id), None)
         if role_ids:
             roles = [r for r in map(guild.get_role, role_ids) if r and r < guild.me.top_role]
             if roles:
-                await member.add_roles(*roles, reason="Restoring roles after SpamGuard kick")
+                await member.add_roles(*roles, reason="Restoring roles after kick")
 
     async def delete_messages(self, guild: discord.Guild, refs: list[MsgRef]) -> None:
         for ref in refs:
@@ -289,8 +289,8 @@ class SpamGuard(discord.Client):
 # ---- slash commands --------------------------------------------------------
 
 spamguard_commands = app_commands.Group(
-    name="spamguard",
-    description="SpamGuard moderation",
+    name="spreader",
+    description="Ben's Butt Spreader moderation",
     guild_only=True,
     default_permissions=discord.Permissions(moderate_members=True),
 )

@@ -1,4 +1,4 @@
-# SpamGuard
+# Ben's Butt Spreader
 
 A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened.
 
@@ -111,8 +111,8 @@ Only people with the **Timeout Members** permission can use these.
 
 | Command | Does |
 |---|---|
-| `/spamguard history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
-| `/spamguard pardon @user` | Ends their timeout and resets their offense count to zero |
+| `/spreader history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
+| `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |
 
 ## Tests
 

@@ -92,7 +92,7 @@ class DashboardTests(unittest.TestCase):
         status, stats = self.call(store, "/api/stats")
         self.assertEqual(stats["total"], 1)
         status, page = self.call(store, "/")
-        self.assertIn("SpamGuard", page)
+        self.assertIn("Butt Spreader", page)
 
     def test_password(self):
         store = Store(":memory:")

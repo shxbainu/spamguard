@@ -22,7 +22,7 @@ def create_app(store: Store, password: str = "") -> web.Application:
         if password:
             expected = "Basic " + base64.b64encode(f"admin:{password}".encode()).decode()
             if not hmac.compare_digest(request.headers.get("Authorization", ""), expected):
-                return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="SpamGuard"'})
+                return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Bens Butt Spreader"'})
         return await handler(request)
 
     async def index(request: web.Request) -> web.Response:
