@@ -167,6 +167,10 @@ class JudgeTests(unittest.TestCase):
         self.assertIsNone(fake.last_kwargs["config"].response_mime_type)
         self.assertIn("a pirate", fake.last_kwargs["config"].system_instruction)
 
+    def test_chat_replaces_em_dashes(self):
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("keep that energy high\u2014you're the best \u2013 fr"))
+        self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "keep that energy high, you're the best, fr")
+
     def test_make_judge_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
             make_judge("openai")
