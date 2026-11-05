@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
-from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, make_judge
+from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, make_judges
 from storage import Store
 
 load_dotenv()
@@ -58,6 +58,7 @@ REPEAT_WINDOW_SECONDS = env_int("REPEAT_WINDOW_SECONDS", 120)
 
 AI_ENABLED = env_bool("AI_ENABLED", True)
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()  # gemini, groq, openrouter or claude
+# Each *_MODEL setting can be a comma-separated list, tried in order; see .env.example.
 AI_MODEL = os.getenv("AI_MODEL", "").strip() or None  # empty = provider default
 AI_STRIKES = env_int("AI_STRIKES", 3)
 AI_STRIKE_WINDOW_SECONDS = env_int("AI_STRIKE_WINDOW_SECONDS", 600)
@@ -111,7 +112,7 @@ class SpamGuard(discord.Client):
         self.gifs = GifSpamDetector(GIF_LIMIT, GIF_WINDOW_SECONDS)
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
-        self.judge = make_judge(AI_PROVIDER, AI_MODEL) if AI_ENABLED else None
+        self.judge = optional_judge(AI_PROVIDER, AI_MODEL, "the AI check") if AI_ENABLED else None
         self.settler = optional_judge(SETTLE_PROVIDER, SETTLE_MODEL, "/settleargument")
         self.chatter = optional_judge(CHAT_PROVIDER, CHAT_MODEL, "the AI chat") if CHAT_ENABLED else None
         self.ai_budget = PerMinuteBudget(AI_MAX_PER_MINUTE)
@@ -519,19 +520,25 @@ async def settle_cmd(
     embed.add_field(name="Why", value=(ruling.reasoning or "–")[:1024], inline=False)
     if ruling.facts:
         embed.add_field(name="Facts", value="\n".join(f"• {fact}" for fact in ruling.facts[:4])[:1024], inline=False)
-    embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.settler.model} · AI can be wrong")
+    embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.settler.last_model} · AI can be wrong")
     said = f"> {comment[:300]}\n" if comment else ""
     await interaction.followup.send(
         f"{said}{ruling.reply}"[:2000], embed=embed, allowed_mentions=discord.AllowedMentions.none(),
     )
 
 
-def optional_judge(provider: str, model: str | None, feature: str) -> Judge | None:
-    """An AI for an optional feature, or None (feature off) when its provider has no API key."""
-    if not os.getenv(API_KEYS[provider]):
-        log.warning("No %s set, so %s is off", API_KEYS[provider], feature)
-        return None
-    return make_judge(provider, model)
+def optional_judge(provider: str, models: str | None, feature: str) -> Judge | None:
+    """The AI (or list of AIs) for a feature, skipping providers without an API key; None turns the feature off."""
+    def has_key(name: str) -> bool:
+        if os.getenv(API_KEYS[name]):
+            return True
+        log.warning("No %s set, so %s skips %s models", API_KEYS[name], feature, name)
+        return False
+
+    judge = make_judges(models, provider, available=has_key)
+    if judge is None:
+        log.warning("%s is off: none of its AI providers have an API key", feature)
+    return judge
 
 
 def main() -> None:

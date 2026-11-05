@@ -110,8 +110,10 @@ OPENAI_COMPATIBLE_URLS = {
 # Groq: less "thinking" means fewer tokens counted against the free per-minute limit.
 # Chat doesn't need reasoning at all; judging and settling get a little.
 GROQ_REASONING_EFFORT = {"qwen/": "none", "openai/gpt-oss": "low"}
-# Wait and retry once when a rate limit clears within this many seconds.
-MAX_RETRY_WAIT = 15
+# Wait and retry once when a rate limit clears within this many seconds (otherwise move to the next model).
+MAX_RETRY_WAIT = 5
+# Give up on a request after this many seconds, so a busy provider can't leave the bot "typing" forever.
+REQUEST_TIMEOUT = 15
 
 MAX_CHARS_PER_MESSAGE = 300
 THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
@@ -192,6 +194,11 @@ class Judge:
 
     model: str
 
+    @property
+    def last_model(self) -> str:
+        """The model that produced the most recent answer."""
+        return self.model
+
     async def complete(self, system: str, prompt: str, schema: dict | None, max_tokens: int) -> str | None:
         """The model's answer (JSON matching `schema`, or plain text when schema is None), or None on failure."""
         raise NotImplementedError
@@ -212,7 +219,7 @@ class Judge:
     async def chat(self, name: str, persona: str, history: list[tuple[str, str]], author: str) -> str | None:
         """An in-character reply to the last message in `history`, or None if the model couldn't be reached."""
         system = CHAT_PROMPT.format(name=name, persona=persona)
-        return clean_reply(await self.complete(system, build_chat_prompt(history, author), None, 512))
+        return clean_reply(await self.complete(system, build_chat_prompt(history, author), None, 768))
 
 
 class ClaudeJudge(Judge):
@@ -290,7 +297,8 @@ class OpenAICompatibleJudge(Judge):
         self.provider = provider
         self.model = model
         self.client = client or openai.AsyncOpenAI(
-            base_url=OPENAI_COMPATIBLE_URLS[provider], api_key=os.getenv(API_KEYS[provider]), max_retries=0,
+            base_url=OPENAI_COMPATIBLE_URLS[provider], api_key=os.getenv(API_KEYS[provider]),
+            max_retries=0, timeout=REQUEST_TIMEOUT,
         )
         self.extra = {}
         if provider == "groq":
@@ -334,12 +342,58 @@ class OpenAICompatibleJudge(Judge):
         return response.choices[0].message.content
 
 
+class FallbackJudge(Judge):
+    """Tries several models in order and uses the first one that answers (busy, rate-limited or down = next)."""
+
+    def __init__(self, judges: list[Judge]):
+        self.judges = judges
+        self.model = " → ".join(judge.model for judge in judges)
+        self._last_model = judges[0].model
+
+    @property
+    def last_model(self) -> str:
+        return self._last_model
+
+    async def complete(self, system: str, prompt: str, schema: dict | None, max_tokens: int) -> str | None:
+        for judge, after in zip(self.judges, self.judges[1:] + [None]):
+            answer = await judge.complete(system, prompt, schema, max_tokens)
+            if answer and answer.strip():
+                self._last_model = judge.model
+                return answer
+            if after is not None:
+                log.info("No answer from %s; trying %s", judge.model, after.model)
+        return None
+
+
+def parse_models(spec: str | None, default_provider: str) -> list[tuple[str, str | None]]:
+    """Reads a model list like "openai/gpt-oss-20b, gemini:gemini-3.5-flash-lite" into (provider, model) pairs.
+
+    An entry may start with "provider:"; otherwise it uses default_provider. Empty means default_provider's
+    default model."""
+    entries = [entry.strip() for entry in (spec or "").split(",") if entry.strip()]
+    if not entries:
+        return [(default_provider, None)]
+    pairs = []
+    for entry in entries:
+        provider, _, model = entry.partition(":")
+        pairs.append((provider, model) if provider in DEFAULT_MODELS and model else (default_provider, entry))
+    return pairs
+
+
 def retry_after(error) -> float | None:
     """Seconds the provider asked us to wait (the retry-after header), if it said."""
     try:
         return float(error.response.headers["retry-after"])
     except (AttributeError, KeyError, TypeError, ValueError):
         return None
+
+
+def make_judges(spec: str | None, default_provider: str, available=lambda provider: True) -> Judge | None:
+    """One Judge for a model list, skipping providers that aren't `available` (e.g. no API key); None if none are."""
+    judges = [make_judge(provider, model) for provider, model in parse_models(spec, default_provider) if available(provider)]
+    if not judges:
+        return None
+    return judges[0] if len(judges) == 1 else FallbackJudge(judges)
 
 
 def make_judge(provider: str, model: str | None = None) -> Judge:

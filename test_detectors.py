@@ -1,10 +1,11 @@
 import asyncio
 import json
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
-from judge import ClaudeJudge, GeminiJudge, OpenAICompatibleJudge, make_judge
+from judge import ClaudeJudge, FallbackJudge, GeminiJudge, Judge, OpenAICompatibleJudge, make_judge, make_judges, parse_models
 
 
 def ref(n: int) -> MsgRef:
@@ -229,13 +230,50 @@ class OpenAICompatibleTests(unittest.TestCase):
     def test_groq_reasoning_effort_and_small_chat_budget(self):
         fake = FakeCompletions("hi")
         asyncio.run(groq_judge(fake, "qwen/qwen3.8-27b").chat("Spreader", "x", CONTEXT, "amy"))
-        self.assertEqual((fake.last_kwargs["reasoning_effort"], fake.last_kwargs["max_tokens"]), ("none", 512))
+        self.assertEqual((fake.last_kwargs["reasoning_effort"], fake.last_kwargs["max_tokens"]), ("none", 768))
         asyncio.run(groq_judge(fake).judge("dave", CONTEXT, "hi"))
         self.assertEqual(fake.last_kwargs["reasoning_effort"], "low")
         openrouter = OpenAICompatibleJudge("openrouter", "google/gemma-4-31b-it:free",
                                            client=SimpleNamespace(chat=SimpleNamespace(completions=fake)))
         asyncio.run(openrouter.chat("Spreader", "x", CONTEXT, "amy"))
         self.assertNotIn("reasoning_effort", fake.last_kwargs, "only sent to Groq")
+
+
+class StubJudge(Judge):  # canned answer
+    def __init__(self, model, answer):
+        self.model = model
+        self.answer = answer
+        self.calls = 0
+
+    async def complete(self, system, prompt, schema, max_tokens):
+        self.calls += 1
+        return self.answer
+
+
+class FallbackTests(unittest.TestCase):
+    def test_parse_models(self):
+        self.assertEqual(parse_models("", "groq"), [("groq", None)])
+        self.assertEqual(
+            parse_models("openai/gpt-oss-20b, gemini:gemini-3.5-flash-lite, openrouter:google/gemma-4-31b-it:free", "groq"),
+            [("groq", "openai/gpt-oss-20b"), ("gemini", "gemini-3.5-flash-lite"), ("openrouter", "google/gemma-4-31b-it:free")],
+        )
+        self.assertEqual(parse_models("google/gemma-4-31b-it:free", "openrouter"), [("openrouter", "google/gemma-4-31b-it:free")])
+
+    def test_uses_first_model_that_answers(self):
+        busy, fast, spare = StubJudge("qwen", None), StubJudge("gpt-oss-20b", "yo"), StubJudge("gemini", "hi")
+        judge = FallbackJudge([busy, fast, spare])
+        self.assertEqual(asyncio.run(judge.chat("Spreader", "x", CONTEXT, "amy")), "yo")
+        self.assertEqual((busy.calls, fast.calls, spare.calls), (1, 1, 0))
+        self.assertEqual(judge.last_model, "gpt-oss-20b")
+        self.assertIsNone(asyncio.run(FallbackJudge([busy, StubJudge("b", "  ")]).chat("S", "x", CONTEXT, "amy")))
+
+    @mock.patch.dict("os.environ", {"GROQ_API_KEY": "test"})
+    def test_make_judges_skips_providers_without_keys(self):
+        judge = make_judges("claude:claude-haiku-5-5, groq:openai/gpt-oss-20b", "groq", available=lambda p: p == "groq")
+        self.assertEqual(judge.model, "openai/gpt-oss-20b")
+        self.assertIsNone(make_judges("claude:claude-haiku-5-5", "groq", available=lambda p: False))
+        both = make_judges("openai/gpt-oss-20b, qwen/qwen3.8-27b", "groq")
+        self.assertEqual(both.model, "openai/gpt-oss-20b → qwen/qwen3.8-27b")
 
 
 class BudgetTests(unittest.TestCase):

@@ -56,12 +56,14 @@ Each job can use a different AI, and each provider has its own free allowance, s
 | Job | Setting | Default in `.env.example` | Why |
 |---|---|---|---|
 | Spam and "not contributing" checks | `AI_PROVIDER` / `AI_MODEL` | Gemini Flash-Lite | Many small, simple checks |
-| `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b` | The best free reasoning model |
-| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `qwen/qwen3.8-27b` | Good at playing a personality; a separate model from settling, so it has its own daily limit |
+| `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b`, then Gemini | The best free reasoning model |
+| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-20b`, then `qwen/qwen3.8-27b`, then Gemini | Fastest stable free model; a separate model from settling, so it has its own daily limit |
 
 Providers: `gemini`, `groq`, `openrouter` (free models, but only 50 requests a day unless you've bought $10 of credit) and `claude` (paid). If a provider's key is missing, the feature that needs it turns off and the bot logs a warning; the rest keeps working.
 
-Groq's Qwen model is marked "preview" and could be removed. If the chat stops answering and the log shows a Groq error about the model, set `CHAT_MODEL=openai/gpt-oss-120b`.
+**Backup models:** each `*_MODEL` setting can be a comma-separated list. The bot tries the models in order and uses the first that answers, so when one is busy ("over capacity"), rate-limited or down, the next one takes over. Prefix an entry with `provider:` to use a different provider, e.g. `CHAT_MODEL=openai/gpt-oss-20b,qwen/qwen3.8-27b,gemini:gemini-3.5-flash-lite`. Each request gives up after 15 seconds. Models whose provider has no API key in `.env` are skipped.
+
+For the chat, put the model you like best first. Qwen (`qwen/qwen3.8-27b`) plays personalities better than gpt-oss-20b, but it's a Groq "preview" model and is sometimes over capacity.
 
 ## Punishment ladder
 
