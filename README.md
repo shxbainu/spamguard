@@ -1,6 +1,6 @@
 # Ben's Butt Spreader
 
-A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened, plus an AI chat with a personality you can change, and fun commands for everyone: `/shutup` and `/settleargument`.
+A Discord bot that watches **every member** for spam and pointless messages, and punishes repeat offenders with timeouts that get longer each time, ending in a kick with an invite back. It includes a web dashboard showing every timeout and kick and why it happened, plus an AI chat with a personality you set, and fun commands for everyone: `/shutup` and `/settleargument`.
 
 ## What counts as an offense
 
@@ -35,7 +35,17 @@ The bot chats in character:
 - **In one channel you pick** (`CHAT_CHANNEL_ID`), it replies to **every** message. That channel is for messing around, so it's never checked for spam.
 - **In any other channel**, it replies when someone **@mentions** it or **replies** to one of its messages.
 
-It sees the last 15 messages in the channel, including its own replies, so it can follow the conversation. Each message is labelled with the person's nickname and username (`Benny (@empireben)`), so a personality can mention people by either name. Change who it is with `/persona set`; the personality is saved per server and survives restarts.
+It sees the last 15 messages in the channel, including its own replies, so it can follow the conversation. Each message is labelled with the person's nickname and username (`Benny (@empireben)`), so a personality can mention people by either name.
+
+### Changing its personality
+
+The personality is set only in `.env`, so nobody can change it from Discord. Write it on one line in double quotes, then restart the bot:
+
+```
+PERSONA="A chaotic, sarcastic gremlin who loves bad puns and has a petty rivalry with empireben."
+```
+
+Leave it empty for the default (a sarcastic, pun-loving gremlin). Whatever it says, the bot's built-in rules keep it to playful roasting: no slurs, nothing sexual, and no attacks on anyone's real-life traits.
 
 Limits so it can't spam or burn through the free tier: it answers each person at most once every 4 seconds (`CHAT_COOLDOWN_SECONDS`), and sends at most 20 replies a minute across the server (`CHAT_MAX_PER_MINUTE`, shared with `/settleargument`). Messages that arrive while it's at a limit just don't get an answer. Its replies can never ping anyone, so it can't `@everyone`.
 
@@ -151,9 +161,6 @@ The bot only works while it's running. To keep it online without your computer, 
 |---|---|
 | `/shutup @user` | Times them out for 10 seconds. Each member gets **3 per week** (rolling 7 days, counted per member). Can't target yourself, bots, admins, or anyone already timed out, and a failed attempt doesn't use one up. It doesn't add to anyone's offense count, but it shows on the dashboard. |
 | `/settleargument [comment] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. Leave a `comment` ("tell Dave he's wrong") and it answers you directly, in its current personality. Once per channel every 30 seconds. |
-| `/persona show` | Shows the AI chat's current personality |
-| `/persona set <personality>` | Changes it, e.g. "a pirate who thinks everything is a government conspiracy". Mods only, unless `PERSONA_ANYONE=true`; set `PERSONA_EDITOR_IDS` to your user ID to make it only you. |
-| `/persona reset` | Back to the default personality (mods only by default) |
 
 `/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. Its personality changes the wording, not who wins. Tune the commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
 
@@ -261,5 +268,5 @@ python -m unittest -v
 - `detectors.py`: GIF, repeat and strike logic
 - `escalation.py`: the punishment ladder
 - `judge.py`: everything that talks to the AI (Gemini, Groq, OpenRouter or Claude): the "is this contributing?" check, argument settling and chat
-- `storage.py`: SQLite history, offense counts, /shutup uses and the saved personality
+- `storage.py`: SQLite history, offense counts and /shutup uses
 - `dashboard.py`, `dashboard.html`: the web dashboard

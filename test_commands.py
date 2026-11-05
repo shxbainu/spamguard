@@ -1,10 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from unittest import mock
-
-import bot
-from bot import CHAT_COOLDOWN_SECONDS, SpamGuard, can_change_persona, shutup_blocker, speaker
+from bot import CHAT_COOLDOWN_SECONDS, SpamGuard, shutup_blocker, speaker
 from detectors import PerMinuteBudget
 
 # Role positions stand in for discord.Role, which compares by position the same way.
@@ -77,19 +74,10 @@ class ChatReplyTests(unittest.TestCase):
 
 
 
-class PersonaAndNameTests(unittest.TestCase):
+class SpeakerTests(unittest.TestCase):
     def test_speaker_shows_username_when_nickname_differs(self):
         self.assertEqual(speaker(SimpleNamespace(display_name="Benny", name="empireben")), "Benny (@empireben)")
         self.assertEqual(speaker(SimpleNamespace(display_name="EmpireBen", name="empireben")), "empireben")
-
-    def test_only_listed_editors_when_set(self):
-        mod = SimpleNamespace(id=5, guild_permissions=SimpleNamespace(moderate_members=True))
-        owner = SimpleNamespace(id=7, guild_permissions=SimpleNamespace(moderate_members=False))
-        self.assertTrue(can_change_persona(mod), "mods by default")
-        self.assertFalse(can_change_persona(owner))
-        with mock.patch.object(bot, "PERSONA_EDITOR_IDS", {7}):
-            self.assertTrue(can_change_persona(owner))
-            self.assertFalse(can_change_persona(mod), "mods locked out once editors are set")
 
 
 if __name__ == "__main__":
