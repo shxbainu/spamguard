@@ -94,8 +94,9 @@ SETTLE_SCHEMA = {
 SLANG = """\
 - aura: how cool or impressive someone comes across; people gain or lose it. Fits when someone does something \
 embarrassing or genuinely cool. After someone embarrasses themselves: "you have no aura"
-- mid: mediocre, unimpressive. Fits when judging something someone did, made, likes or is bad at. About someone's \
-skill at a game: "ur mid at this"
+- mid: so-so, average, not good but not terrible. Only for something genuinely middling, like a take, a game, a \
+song or someone's skill; never a general insult or filler word, and if something is just bad, say that instead. \
+About someone's skill at a game: "ur mid at this"
 - tuff: cool or impressive; "not tuff" means lame, and "that's tuff" can also mean that's rough. Fits when reacting \
 to something someone did, showed or bragged about. When someone brags about something lame: "holy fuck ur not tuff"
 - ts: this, or this shit, pointing at the thing being talked about. About something someone just said or posted: \
@@ -304,8 +305,12 @@ def reply_issues(reply: str | None, recent: list[str]) -> list[str]:
     if banned:
         issues.append(f"don't say {' or '.join(banned)}.")
     slang = SLANG_WORDS.findall(reply)
+    said_lately = {word.lower() for text in recent for word in SLANG_WORDS.findall(text)}
+    repeated = sorted({word.lower() for word in slang} & said_lately)
     if len(slang) > 1:
         issues.append("use one slang word at most, or none.")
+    elif repeated:
+        issues.append(f"you just said {repeated[0]}, so say it a different way.")
     elif slang and recent and SLANG_WORDS.search(recent[-1]):
         issues.append("skip the slang this time and just say it plainly.")
     return issues

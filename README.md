@@ -8,7 +8,7 @@ A Discord bot that watches **every member** for spam and pointless messages, and
 |---|---|---|
 | **GIF spam** | 4+ GIFs or stickers within 60 seconds (Tenor/Giphy links, `.gif` uploads, gifv embeds) | No |
 | **Repeating** | 3+ near-identical messages within 2 minutes ("BRO LOOK" / "bro look!!" / "bro look!!!") | No |
-| **Not contributing** | 3 messages judged as noise within 10 minutes | Yes: a fast model on Groq's free tier, with Gemini as a second opinion when it's unsure |
+| **Not contributing** | 3 messages in a row judged as noise, within 10 minutes | Yes: a fast model on Groq's free tier, with Gemini as a second opinion when it's unsure |
 
 The owner, admins, mods (anyone who can manage messages or time members out), bots, and any roles in `EXEMPT_ROLE_IDS` are never punished.
 
@@ -26,7 +26,7 @@ The AI must answer in a fixed JSON format with one of three verdicts plus a shor
 - `low_effort`: gibberish, keyboard mashing, emoji spam, or a random question or remark that ignores what everyone's talking about.
 - `disruptive`: trolling, baiting, or deliberately derailing.
 
-Anything other than `ok` is a **strike**. A single strike does nothing; 3 strikes within 10 minutes is one offense. That way one misjudged message never gets anyone punished. If the AI can't be reached, gives a broken answer, or the per-minute cap is hit, the message is just skipped.
+Anything other than `ok` is a **strike**. A single strike does nothing; 3 strikes **in a row** within 10 minutes is one offense, and any message judged normal in between resets the count. That way one or two misjudged messages never get anyone punished. If the AI can't be reached, gives a broken answer, or the per-minute cap is hit, the message is just skipped.
 
 ## AI chat
 

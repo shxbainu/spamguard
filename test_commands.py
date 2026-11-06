@@ -1,8 +1,10 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 
 from bot import CHAT_COOLDOWN_SECONDS, SpamGuard, shutup_blocker, speaker
-from detectors import PerMinuteBudget
+from detectors import PerMinuteBudget, StrikeTracker
+from judge import Verdict
 
 # Role positions stand in for discord.Role, which compares by position the same way.
 GUILD = SimpleNamespace(owner_id=1, me=SimpleNamespace(top_role=10))
@@ -78,6 +80,33 @@ class SpeakerTests(unittest.TestCase):
     def test_speaker_shows_username_when_nickname_differs(self):
         self.assertEqual(speaker(SimpleNamespace(display_name="Benny", name="empireben")), "Benny (@empireben)")
         self.assertEqual(speaker(SimpleNamespace(display_name="EmpireBen", name="empireben")), "empireben")
+
+
+
+class InARowTests(unittest.TestCase):
+    def run_messages(self, verdicts):
+        punished = []
+        answers = iter(verdicts)
+
+        async def judge(*args):
+            return next(answers)
+
+        async def punish(message, category, reason, evidence, refs):
+            punished.append(reason)
+
+        bot = SimpleNamespace(
+            judge=SimpleNamespace(judge=judge), strikes=StrikeTracker(3, 600),
+            remaining_penalty=lambda guild_id, user_id: 0, punish=punish,
+        )
+        message = SimpleNamespace(author=SimpleNamespace(id=5, display_name="ben", name="ben"), guild=SimpleNamespace(id=1))
+        for _ in verdicts:
+            asyncio.run(SpamGuard.check_contribution(bot, message, [], "msg"))
+        return punished
+
+    def test_normal_message_in_between_resets_the_count(self):
+        flag, ok = Verdict("low_effort", "random"), Verdict("ok", "fine")
+        self.assertEqual(self.run_messages([flag, flag, ok, flag, flag]), [], "never 3 in a row")
+        self.assertEqual(len(self.run_messages([flag, flag, flag])), 1, "3 in a row is an offense")
 
 
 if __name__ == "__main__":

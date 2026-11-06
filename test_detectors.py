@@ -325,6 +325,12 @@ class ChatRewriteTests(unittest.TestCase):
         self.assertEqual(self.chat(fake, history), "cause he never shuts up")
         self.assertIn("plainly", fake.requests[1]["contents"][-1]["parts"][0]["text"])
 
+    def test_slang_used_in_recent_replies_gets_rewritten(self):
+        history = CONTEXT + [("S", "ur mid at this"), ("amy", "ok"), ("S", "whatever"), ("amy", "how was the movie")]
+        fake = FakeGeminiSequence("mid af", "it was alright")
+        self.assertEqual(self.chat(fake, history), "it was alright")
+        self.assertIn("you just said mid", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+
     def test_fine_reply_is_sent_once(self):
         fake = FakeGeminiSequence("shut up you clown")
         self.assertEqual(self.chat(fake), "shut up you clown")

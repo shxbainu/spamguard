@@ -309,9 +309,12 @@ class SpamGuard(discord.Client):
 
     async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
         verdict = await self.judge.judge(speaker(message.author), context, text, PERSONA)
-        if verdict is None or verdict.ok:
+        if verdict is None:
             return
         member = message.author
+        if verdict.ok:
+            self.strikes.reset(member.id)  # strikes only add up when they come in a row
+            return
         log.info("Strike for %s (%s, by %s): %s | %r", member, verdict.verdict, verdict.model, verdict.reason, text[:100])
         strikes = self.strikes.add(member.id, f"{verdict.reason}\n“{text[:150]}”", time.monotonic())
         if strikes and not self.remaining_penalty(message.guild.id, member.id):
