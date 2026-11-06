@@ -437,9 +437,19 @@ class SecondOpinionTests(unittest.TestCase):
         verdict = asyncio.run(SecondOpinion(first, second).judge("amy", CONTEXT, "kim john un", "persona"))
         return verdict, second.calls
 
-    def test_sure_verdict_skips_gemini(self):
-        verdict, asked = self.run_check(Verdict("low_effort", "mash", confident=True))
-        self.assertEqual((verdict.verdict, asked), ("low_effort", 0))
+    def test_sure_ok_skips_gemini(self):
+        verdict, asked = self.run_check(Verdict("ok", "fine", confident=True))
+        self.assertEqual((verdict.verdict, asked), ("ok", 0))
+
+    def test_flag_needs_gemini_to_agree(self):
+        verdict, asked = self.run_check(Verdict("low_effort", "gibberish", confident=True), Verdict("ok", "means wait"))
+        self.assertEqual((verdict.verdict, asked), ("ok", 1), "Wit after a roast is a reaction, not spam")
+        verdict, asked = self.run_check(Verdict("low_effort", "mash"), Verdict("low_effort", "keyboard mash"))
+        self.assertEqual((verdict.verdict, asked), ("low_effort", 1))
+
+    def test_no_strike_when_gemini_is_unavailable(self):
+        verdict, asked = self.run_check(Verdict("low_effort", "mash"), None)
+        self.assertEqual((verdict, asked), (None, 1))
 
     def test_unsure_verdict_asks_gemini(self):
         verdict, asked = self.run_check(Verdict("low_effort", "random?", confident=False), Verdict("ok", "running joke"))
@@ -452,6 +462,12 @@ class SecondOpinionTests(unittest.TestCase):
     def test_gemini_failing_keeps_first_answer(self):
         verdict, asked = self.run_check(Verdict("ok", "probably fine", confident=False), None)
         self.assertEqual((verdict.reason, asked), ("probably fine", 1))
+
+    def test_verdict_records_its_model(self):
+        fake = FakeGemini(json.dumps({"verdict": "ok", "reason": "x", "confident": True}))
+        verdict = asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).judge("amy", CONTEXT, "wit"))
+        self.assertEqual(verdict.model, "gemini-3.5-flash-lite")
+        self.assertIn('"wit" for wait', fake.last_kwargs["config"].system_instruction)
 
     def test_confident_is_read_from_the_answer(self):
         fake = FakeGemini(json.dumps({"verdict": "low_effort", "reason": "x", "confident": False}))

@@ -97,6 +97,8 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 DB_PATH = Path(__file__).with_name("spamguard.db")
 
 log = logging.getLogger("spamguard")
+# The Gemini SDK logs "AFC is enabled" on every call; the bot logs which model answered instead.
+logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 
 
 def speaker(member: discord.abc.User) -> str:
@@ -296,6 +298,8 @@ class SpamGuard(discord.Client):
                 text = await chatter.chat(name, PERSONA, list(history), speaker(message.author))
             if not text:
                 return
+            where = "chat channel" if in_chat_channel else "mention"
+            log.info("Reply (%s) by %s: %r", where, chatter.last_model, text[:100])
             # No pings from the AI, ever (it can't @everyone or mention people).
             await message.reply(text[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException as e:
@@ -308,7 +312,7 @@ class SpamGuard(discord.Client):
         if verdict is None or verdict.ok:
             return
         member = message.author
-        log.info("Strike for %s (%s): %s | %r", member, verdict.verdict, verdict.reason, text[:100])
+        log.info("Strike for %s (%s, by %s): %s | %r", member, verdict.verdict, verdict.model, verdict.reason, text[:100])
         strikes = self.strikes.add(member.id, f"{verdict.reason}\n“{text[:150]}”", time.monotonic())
         if strikes and not self.remaining_penalty(message.guild.id, member.id):
             reasons = [s.split("\n", 1)[0] for s in strikes]
@@ -536,6 +540,8 @@ async def settle_cmd(
         await interaction.followup.send("There's nothing here to settle.")
         return
     ruling = await bot.settler.settle(transcript, speaker(interaction.user), comment, PERSONA)
+    if ruling:
+        log.info("Settled %r by %s: winner %s", ruling.topic[:60], bot.settler.last_model, ruling.winner)
     if ruling is None:
         await interaction.followup.send("The AI couldn't be reached. Try again in a minute.")
         return
