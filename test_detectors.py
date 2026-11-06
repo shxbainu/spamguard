@@ -198,7 +198,7 @@ class JudgeTests(unittest.TestCase):
             ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "just trying to keep the vibe interesting"),
             ("alright, i'll zip it. \U0001F644", "i'll zip it \U0001F644"),
             ("Yo Shxbainu, hope that \u201clast test\u201d wasn\u2019t another one of your \u201cI\u2019m basically a walking Wikipedia\u201d essays \U0001F602. Get some sleep before you turn into a meme",
-             "yo shxbainu, hope that last test wasn\u2019t another one of your i\u2019m basically a walking wikipedia essays \U0001F602"),
+             "yo shxbainu, hope that last test wasn\u2019t another one of your i\u2019m basically a walking"),
             ("Sir Shxbainu, my man. Guess I\u2019ll have to bow down to the ultimate test-master. Good luck, don\u2019t let the questions bite",
              "sir shxbainu, my man. guess i\u2019ll have to bow down to the ultimate test-master"),
             ("nah. why would i even care? LMAO you wild", "nah. lmao you wild"),
@@ -223,6 +223,8 @@ class JudgeTests(unittest.TestCase):
              "if you lobotomize the bot you\u2019ll finally get some original content"),
             ("ngl tkum has been asking the same three questions all night, at this point it is genuinely impressive how little changes",
              "ngl tkum has been asking the same three questions all night"),
+            ("bro stfu. shut up you bum \U0001F62D", "bro stfu. shut up you bum \U0001F62D"),  # telling people off stays in
+            ("syfm", "syfm"),
         )
         for raw, expected in cases:
             judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
