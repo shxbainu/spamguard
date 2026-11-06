@@ -72,6 +72,10 @@ SETTLE_MODEL = os.getenv("SETTLE_MODEL", "").strip() or None
 CHAT_ENABLED = env_bool("CHAT_ENABLED", True)
 CHAT_PROVIDER = (os.getenv("CHAT_PROVIDER") or SETTLE_PROVIDER).strip().lower()
 CHAT_MODEL = os.getenv("CHAT_MODEL", "").strip() or None
+# @mentions and replies to the bot outside CHAT_CHANNEL_ID, where a good answer matters more than speed.
+# Empty = the same models as /settleargument.
+MENTION_PROVIDER = (os.getenv("MENTION_PROVIDER") or SETTLE_PROVIDER).strip().lower()
+MENTION_MODEL = os.getenv("MENTION_MODEL", "").strip() or SETTLE_MODEL
 CHAT_CHANNEL_ID = env_int("CHAT_CHANNEL_ID", 0)
 CHAT_COOLDOWN_SECONDS = env_int("CHAT_COOLDOWN_SECONDS", 4)
 CHAT_MAX_PER_MINUTE = env_int("CHAT_MAX_PER_MINUTE", 20)
@@ -113,8 +117,12 @@ class SpamGuard(discord.Client):
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
         self.judge = optional_judge(AI_PROVIDER, AI_MODEL, "the AI check") if AI_ENABLED else None
-        self.settler = optional_judge(SETTLE_PROVIDER, SETTLE_MODEL, "/settleargument")
+        # Reasoning models think hardest where answers matter most: settling arguments, then mentions elsewhere.
+        self.settler = optional_judge(SETTLE_PROVIDER, SETTLE_MODEL, "/settleargument", effort="high")
         self.chatter = optional_judge(CHAT_PROVIDER, CHAT_MODEL, "the AI chat") if CHAT_ENABLED else None
+        self.mention_chatter = (
+            optional_judge(MENTION_PROVIDER, MENTION_MODEL, "replies to mentions", effort="medium") if CHAT_ENABLED else None
+        )
         self.ai_budget = PerMinuteBudget(AI_MAX_PER_MINUTE)
         self.chat_budget = PerMinuteBudget(CHAT_MAX_PER_MINUTE)  # chat replies and /settleargument
         self.last_reply: dict[int, float] = {}  # user id -> monotonic time the bot last answered them
@@ -157,7 +165,10 @@ class SpamGuard(discord.Client):
 
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
         log.info("Logged in as %s. Punishments: %s", self.user, ladder)
-        log.info("AI: moderation=%s, settle=%s, chat=%s", describe(self.judge), describe(self.settler), describe(self.chatter))
+        log.info(
+            "AI: moderation=%s, settle=%s, chat channel=%s, mentions elsewhere=%s",
+            describe(self.judge), describe(self.settler), describe(self.chatter), describe(self.mention_chatter),
+        )
         if PERSONA == DEFAULT_PERSONA:
             log.warning(
                 "Using the default personality: PERSONA is empty or couldn't be read from .env "
@@ -273,7 +284,9 @@ class SpamGuard(discord.Client):
         name = message.guild.me.display_name
         try:
             async with message.channel.typing():
-                text = await self.chatter.chat(name, PERSONA, list(history), speaker(message.author))
+                in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
+                chatter = self.chatter if in_chat_channel else (self.mention_chatter or self.chatter)
+                text = await chatter.chat(name, PERSONA, list(history), speaker(message.author))
             if not text:
                 return
             # No pings from the AI, ever (it can't @everyone or mention people).
@@ -534,7 +547,7 @@ async def settle_cmd(
     )
 
 
-def optional_judge(provider: str, models: str | None, feature: str) -> Judge | None:
+def optional_judge(provider: str, models: str | None, feature: str, effort: str | None = None) -> Judge | None:
     """The AI (or list of AIs) for a feature, skipping providers without an API key; None turns the feature off."""
     def has_key(name: str) -> bool:
         if os.getenv(API_KEYS[name]):
@@ -542,7 +555,7 @@ def optional_judge(provider: str, models: str | None, feature: str) -> Judge | N
         log.warning("No %s set, so %s skips %s models", API_KEYS[name], feature, name)
         return False
 
-    judge = make_judges(models, provider, available=has_key)
+    judge = make_judges(models, provider, available=has_key, effort=effort)
     if judge is None:
         log.warning("%s is off: none of its AI providers have an API key", feature)
     return judge
@@ -551,7 +564,11 @@ def optional_judge(provider: str, models: str | None, feature: str) -> Judge | N
 def main() -> None:
     if not TOKEN:
         raise SystemExit("Set DISCORD_TOKEN in .env (see .env.example)")
-    for setting, provider in (("AI_PROVIDER", AI_PROVIDER), ("SETTLE_PROVIDER", SETTLE_PROVIDER), ("CHAT_PROVIDER", CHAT_PROVIDER)):
+    providers = (
+        ("AI_PROVIDER", AI_PROVIDER), ("SETTLE_PROVIDER", SETTLE_PROVIDER),
+        ("CHAT_PROVIDER", CHAT_PROVIDER), ("MENTION_PROVIDER", MENTION_PROVIDER),
+    )
+    for setting, provider in providers:
         if provider not in DEFAULT_MODELS:
             raise SystemExit(f"{setting} must be one of: {', '.join(DEFAULT_MODELS)}")
     key_name = API_KEYS[AI_PROVIDER]

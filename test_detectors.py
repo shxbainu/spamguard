@@ -419,6 +419,27 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(both.model, "openai/gpt-oss-20b → qwen/qwen3.8-27b")
 
 
+class EffortTests(unittest.TestCase):
+    def groq(self, model, effort):
+        fake = FakeCompletions("ok")
+        judge = OpenAICompatibleJudge("groq", model, client=SimpleNamespace(chat=SimpleNamespace(completions=fake)), effort=effort)
+        asyncio.run(judge.chat("S", "x", CONTEXT, "amy"))
+        return fake.last_kwargs
+
+    def test_effort_raises_reasoning_and_room_to_think(self):
+        sent = self.groq("openai/gpt-oss-120b", "medium")
+        self.assertEqual((sent["reasoning_effort"], sent["max_tokens"]), ("medium", 1536))
+        sent = self.groq("openai/gpt-oss-120b", None)
+        self.assertEqual((sent["reasoning_effort"], sent["max_tokens"]), ("low", 768))
+        self.assertNotIn("reasoning_effort", self.groq("llama-3.1-8b-instant", "high"), "models that don't reason")
+
+    @mock.patch.dict("os.environ", {"GROQ_API_KEY": "test"})
+    def test_fallback_list_carries_effort(self):
+        judge = make_judges("openai/gpt-oss-120b, openai/gpt-oss-20b", "groq", effort="high")
+        self.assertEqual([j.effort for j in judge.judges], ["high", "high"])
+        self.assertEqual(judge.effort, "high")
+
+
 class BudgetTests(unittest.TestCase):
     def test_per_minute_budget(self):
         budget = PerMinuteBudget(2)

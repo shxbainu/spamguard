@@ -57,7 +57,10 @@ Each job can use a different AI, and each provider has its own free allowance, s
 |---|---|---|---|
 | Spam and "not contributing" checks | `AI_PROVIDER` / `AI_MODEL` | Gemini Flash-Lite | Many small, simple checks |
 | `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b`, then Gemini | The best free reasoning model |
-| AI chat | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | The most coherent free model; smaller ones force jokes that don't make sense |
+| AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | The most coherent free model; smaller ones force jokes that don't make sense |
+| @mentions and replies in other channels | `MENTION_PROVIDER` / `MENTION_MODEL` | Same as `/settleargument` | Where a useful answer matters most |
+
+Reasoning models (gpt-oss, Qwen) think harder where answers matter: high for `/settleargument`, medium for mentions in other channels, low in the chat channel to keep it fast and within the free limits.
 
 Providers: `gemini`, `groq`, `openrouter` (free models, but only 50 requests a day unless you've bought $10 of credit) and `claude` (paid). If a provider's key is missing, the feature that needs it turns off and the bot logs a warning; the rest keeps working.
 

@@ -148,9 +148,12 @@ OPENAI_COMPATIBLE_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
 }
 
-# Groq: less "thinking" means fewer tokens counted against the free per-minute limit.
-# Chat doesn't need reasoning at all; judging and settling get a little.
+# Groq: less "thinking" means fewer tokens counted against the free per-minute limit, so by default chat
+# doesn't reason at all and judging gets a little. Features that need better answers (settling arguments,
+# replies to mentions) ask for more with `effort`.
 GROQ_REASONING_EFFORT = {"qwen/": "none", "openai/gpt-oss": "low"}
+# Room for the reply plus the model's thinking, by reasoning effort.
+CHAT_TOKENS = {None: 768, "low": 768, "medium": 1536, "high": 3072}
 # Wait and retry once when a rate limit clears within this many seconds (otherwise move to the next model).
 MAX_RETRY_WAIT = 5
 # Give up on a request after this many seconds, so a busy provider can't leave the bot "typing" forever.
@@ -428,7 +431,7 @@ class Judge:
     ) -> Ruling | None:
         """Returns a Ruling on the argument in `transcript`, or None if the model couldn't be reached."""
         system = SETTLE_PROMPT.format(persona=persona)
-        answer = await self.complete(system, build_settle_prompt(transcript, asker, comment), SETTLE_SCHEMA, 2048)
+        answer = await self.complete(system, build_settle_prompt(transcript, asker, comment), SETTLE_SCHEMA, 4096)
         ruling = parse_ruling(clean_reply(answer))
         if ruling:  # the one-liner is the bot talking, so it gets the same tidy-up as chat replies
             persona_emojis = {emoji.replace("\ufe0f", "") for emoji in EMOJI.findall(persona)}
@@ -440,14 +443,15 @@ class Judge:
         system = CHAT_PROMPT.format(name=name, persona=persona, slang=SLANG)
         turns = build_chat_turns(history, name)
         recent = [text for speaker, text in history if speaker == name][-3:]
-        reply = clean_reply(await self.send(system, turns, None, 768))
+        max_tokens = CHAT_TOKENS.get(getattr(self, "effort", None), 768)
+        reply = clean_reply(await self.send(system, turns, None, max_tokens))
         issues = reply_issues(reply, recent)
         if issues:
             # One rewrite with a note, the way a person would rephrase; the reply's tidy-up handles the rest.
             log.info("Rewriting chat reply %r: %s", reply, " ".join(issues))
             role, last = turns[-1]
             note = f"{last}\n\n(note for your next message only: {' '.join(issues)})"
-            reply = clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, 768)) or reply
+            reply = clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, max_tokens)) or reply
         # No emoji two messages in a row, so they stay occasional even when the personality loves them.
         previous = recent[-1] if recent else ""
         names = name_variants([speaker for speaker, _ in history if speaker != name])
@@ -527,7 +531,7 @@ class GeminiJudge(Judge):
 class OpenAICompatibleJudge(Judge):
     """Groq, OpenRouter, and any other API that copies OpenAI's chat completions format."""
 
-    def __init__(self, provider: str, model: str, client=None):
+    def __init__(self, provider: str, model: str, client=None, effort: str | None = None):
         import openai
 
         self._openai = openai
@@ -538,10 +542,12 @@ class OpenAICompatibleJudge(Judge):
             max_retries=0, timeout=REQUEST_TIMEOUT,
         )
         self.extra = {}
+        self.effort = None
         if provider == "groq":
-            effort = next((e for prefix, e in GROQ_REASONING_EFFORT.items() if model.startswith(prefix)), None)
-            if effort:
-                self.extra["reasoning_effort"] = effort
+            default = next((e for prefix, e in GROQ_REASONING_EFFORT.items() if model.startswith(prefix)), None)
+            if default:  # only models that reason take the setting
+                self.effort = effort or default
+                self.extra["reasoning_effort"] = self.effort
 
     async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
         openai = self._openai
@@ -584,6 +590,7 @@ class FallbackJudge(Judge):
 
     def __init__(self, judges: list[Judge]):
         self.judges = judges
+        self.effort = next((judge.effort for judge in judges if getattr(judge, "effort", None)), None)
         self.model = " → ".join(judge.model for judge in judges)
         self._last_model = judges[0].model
 
@@ -625,15 +632,19 @@ def retry_after(error) -> float | None:
         return None
 
 
-def make_judges(spec: str | None, default_provider: str, available=lambda provider: True) -> Judge | None:
-    """One Judge for a model list, skipping providers that aren't `available` (e.g. no API key); None if none are."""
-    judges = [make_judge(provider, model) for provider, model in parse_models(spec, default_provider) if available(provider)]
+def make_judges(
+    spec: str | None, default_provider: str, available=lambda provider: True, effort: str | None = None,
+) -> Judge | None:
+    """One Judge for a model list, skipping providers that aren't `available` (e.g. no API key); None if none are.
+    `effort` ("low", "medium" or "high") overrides how hard reasoning models think."""
+    pairs = parse_models(spec, default_provider)
+    judges = [make_judge(provider, model, effort) for provider, model in pairs if available(provider)]
     if not judges:
         return None
     return judges[0] if len(judges) == 1 else FallbackJudge(judges)
 
 
-def make_judge(provider: str, model: str | None = None) -> Judge:
+def make_judge(provider: str, model: str | None = None, effort: str | None = None) -> Judge:
     if provider not in DEFAULT_MODELS:
         raise ValueError(f"Unknown AI provider {provider!r}; use one of: {', '.join(DEFAULT_MODELS)}")
     model = model or DEFAULT_MODELS[provider]
@@ -641,4 +652,4 @@ def make_judge(provider: str, model: str | None = None) -> Judge:
         return ClaudeJudge(model)
     if provider == "gemini":
         return GeminiJudge(model)
-    return OpenAICompatibleJudge(provider, model)
+    return OpenAICompatibleJudge(provider, model, effort=effort)
