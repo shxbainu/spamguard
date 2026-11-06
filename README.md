@@ -8,7 +8,7 @@ A Discord bot that watches **every member** for spam and pointless messages, and
 |---|---|---|
 | **GIF spam** | 4+ GIFs or stickers within 60 seconds (Tenor/Giphy links, `.gif` uploads, gifv embeds) | No |
 | **Repeating** | 3+ near-identical messages within 2 minutes ("BRO LOOK" / "bro look!!" / "bro look!!!") | No |
-| **Not contributing** | 3 messages judged as noise within 10 minutes | Yes, Google Gemini (free tier) |
+| **Not contributing** | 3 messages judged as noise within 10 minutes | Yes: a fast model on Groq's free tier, with Gemini as a second opinion when it's unsure |
 
 The owner, admins, mods (anyone who can manage messages or time members out), bots, and any roles in `EXEMPT_ROLE_IDS` are never punished.
 
@@ -55,10 +55,13 @@ Each job can use a different AI, and each provider has its own free allowance, s
 
 | Job | Setting | Default in `.env.example` | Why |
 |---|---|---|---|
-| Spam and "not contributing" checks | `AI_PROVIDER` / `AI_MODEL` | Gemini Flash-Lite | Many small, simple checks |
-| `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b`, then Gemini | The best free reasoning model |
-| AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | The most coherent free model; smaller ones force jokes that don't make sense |
+| "Not contributing" check | `AI_PROVIDER` / `AI_MODEL` | Groq `openai/gpt-oss-20b`, then `qwen/qwen3.8-27b` | Fast and cheap for checking every message |
+| Second opinion when that check isn't sure | `AI_UNSURE_PROVIDER` / `AI_UNSURE_MODEL` | Gemini 3.5 Flash-Lite | Smarter, so it's saved for the hard calls |
+| `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Gemini 3.5 Flash-Lite, then Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b` | Scores higher than gpt-oss-120b on benchmarks |
+| AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | Answers in about a second; smaller models force jokes that don't make sense |
 | @mentions and replies in other channels | `MENTION_PROVIDER` / `MENTION_MODEL` | Same as `/settleargument` | Where a useful answer matters most |
+
+The "not contributing" check reports whether it's sure. Only when it isn't (a borderline message, or slang and in-jokes it can't place) does the bot ask the second-opinion model, which keeps Gemini's daily allowance for settling arguments and mentions. If the cheap models are all rate-limited, that message's AI check is skipped instead of falling back to Gemini.
 
 Reasoning models (gpt-oss, Qwen) think harder where answers matter: high for `/settleargument`, medium for mentions in other channels, low in the chat channel to keep it fast and within the free limits.
 

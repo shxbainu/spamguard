@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
-from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, make_judges
+from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, SecondOpinion, make_judges
 from storage import Store
 
 load_dotenv()
@@ -60,6 +60,9 @@ AI_ENABLED = env_bool("AI_ENABLED", True)
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()  # gemini, groq, openrouter or claude
 # Each *_MODEL setting can be a comma-separated list, tried in order; see .env.example.
 AI_MODEL = os.getenv("AI_MODEL", "").strip() or None  # empty = provider default
+# A smarter model asked only when the AI_MODEL check isn't sure; empty = no second opinion.
+AI_UNSURE_PROVIDER = (os.getenv("AI_UNSURE_PROVIDER") or AI_PROVIDER).strip().lower()
+AI_UNSURE_MODEL = os.getenv("AI_UNSURE_MODEL", "").strip() or None
 AI_STRIKES = env_int("AI_STRIKES", 3)
 AI_STRIKE_WINDOW_SECONDS = env_int("AI_STRIKE_WINDOW_SECONDS", 600)
 AI_MAX_PER_MINUTE = env_int("AI_MAX_PER_MINUTE", 12)
@@ -117,6 +120,10 @@ class SpamGuard(discord.Client):
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
         self.judge = optional_judge(AI_PROVIDER, AI_MODEL, "the AI check") if AI_ENABLED else None
+        if self.judge and AI_UNSURE_MODEL:
+            unsure = optional_judge(AI_UNSURE_PROVIDER, AI_UNSURE_MODEL, "the AI check's second opinion")
+            if unsure:
+                self.judge = SecondOpinion(self.judge, unsure)
         # Reasoning models think hardest where answers matter most: settling arguments, then mentions elsewhere.
         self.settler = optional_judge(SETTLE_PROVIDER, SETTLE_MODEL, "/settleargument", effort="high")
         self.chatter = optional_judge(CHAT_PROVIDER, CHAT_MODEL, "the AI chat") if CHAT_ENABLED else None
@@ -565,7 +572,7 @@ def main() -> None:
     if not TOKEN:
         raise SystemExit("Set DISCORD_TOKEN in .env (see .env.example)")
     providers = (
-        ("AI_PROVIDER", AI_PROVIDER), ("SETTLE_PROVIDER", SETTLE_PROVIDER),
+        ("AI_PROVIDER", AI_PROVIDER), ("AI_UNSURE_PROVIDER", AI_UNSURE_PROVIDER), ("SETTLE_PROVIDER", SETTLE_PROVIDER),
         ("CHAT_PROVIDER", CHAT_PROVIDER), ("MENTION_PROVIDER", MENTION_PROVIDER),
     )
     for setting, provider in providers:

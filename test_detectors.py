@@ -5,7 +5,7 @@ from unittest import mock
 from types import SimpleNamespace
 
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
-from judge import ClaudeJudge, FallbackJudge, GeminiJudge, Judge, OpenAICompatibleJudge, make_judge, make_judges, parse_models
+from judge import ClaudeJudge, FallbackJudge, GeminiJudge, Judge, SecondOpinion, Verdict, OpenAICompatibleJudge, make_judge, make_judges, parse_models
 
 
 def ref(n: int) -> MsgRef:
@@ -417,6 +417,47 @@ class FallbackTests(unittest.TestCase):
         self.assertIsNone(make_judges("claude:claude-haiku-5-5", "groq", available=lambda p: False))
         both = make_judges("openai/gpt-oss-20b, qwen/qwen3.8-27b", "groq")
         self.assertEqual(both.model, "openai/gpt-oss-20b → qwen/qwen3.8-27b")
+
+
+class CannedModeration:
+    def __init__(self, model, verdict):
+        self.model = model
+        self.verdict = verdict
+        self.calls = 0
+
+    async def judge(self, author, context, message, persona=None):
+        self.calls += 1
+        return self.verdict
+
+
+class SecondOpinionTests(unittest.TestCase):
+    def run_check(self, first_verdict, second_verdict=Verdict("ok", "fine")):
+        first = CannedModeration("gpt-oss-20b", first_verdict)
+        second = CannedModeration("gemini", second_verdict)
+        verdict = asyncio.run(SecondOpinion(first, second).judge("amy", CONTEXT, "kim john un", "persona"))
+        return verdict, second.calls
+
+    def test_sure_verdict_skips_gemini(self):
+        verdict, asked = self.run_check(Verdict("low_effort", "mash", confident=True))
+        self.assertEqual((verdict.verdict, asked), ("low_effort", 0))
+
+    def test_unsure_verdict_asks_gemini(self):
+        verdict, asked = self.run_check(Verdict("low_effort", "random?", confident=False), Verdict("ok", "running joke"))
+        self.assertEqual((verdict.verdict, asked), ("ok", 1))
+
+    def test_unreachable_cheap_model_doesnt_spend_gemini(self):
+        verdict, asked = self.run_check(None)
+        self.assertEqual((verdict, asked), (None, 0))
+
+    def test_gemini_failing_keeps_first_answer(self):
+        verdict, asked = self.run_check(Verdict("ok", "probably fine", confident=False), None)
+        self.assertEqual((verdict.reason, asked), ("probably fine", 1))
+
+    def test_confident_is_read_from_the_answer(self):
+        fake = FakeGemini(json.dumps({"verdict": "low_effort", "reason": "x", "confident": False}))
+        verdict = asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).judge("amy", CONTEXT, "hm"))
+        self.assertFalse(verdict.confident)
+        self.assertIn("confident", fake.last_kwargs["config"].response_json_schema["required"])
 
 
 class EffortTests(unittest.TestCase):
