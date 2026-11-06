@@ -35,7 +35,7 @@ The bot chats in character:
 - **In one channel you pick** (`CHAT_CHANNEL_ID`), it replies to **every** message. That channel is for messing around, so it's never checked for spam.
 - **In any other channel**, it replies when someone **@mentions** it or **replies** to one of its messages.
 
-It sees the last 15 messages in the channel, including its own replies, so it can follow the conversation. Each message is labelled with the person's nickname and username (`Benny (@empireben)`), so a personality can mention people by either name.
+It remembers the last 30 messages in the channel (`CHAT_CONTEXT_MESSAGES`), including its own replies, and after a restart it reads them back from Discord the first time it chats in a channel. It also sees what it recently said in other channels, so it doesn't contradict itself. When a message (or the message it replies to) has a picture, Gemini looks at it; Groq models can't see pictures and are told one was shared. When someone asks it a question, it has to actually answer: a reply of three words or fewer to a question gets rewritten. Each message is labelled with the person's nickname and username (`Benny (@empireben)`), so a personality can mention people by either name.
 
 ### Changing its personality
 
@@ -58,7 +58,7 @@ Each job can use a different AI, and each provider has its own free allowance, s
 | "Not contributing" check | `AI_PROVIDER` / `AI_MODEL` | Groq `openai/gpt-oss-20b`, then `qwen/qwen3.8-27b` | Fast and cheap for checking every message |
 | Second opinion when that check isn't sure | `AI_UNSURE_PROVIDER` / `AI_UNSURE_MODEL` | Gemini 3.5 Flash-Lite | Smarter, so it's saved for the hard calls |
 | `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Gemini 3.5 Flash-Lite, then Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b` | Scores higher than gpt-oss-120b on benchmarks |
-| AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Groq `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b`, then Gemini | Answers in about a second; smaller models force jokes that don't make sense |
+| AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Gemini 3.5 Flash-Lite, then Groq `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b` | Same brain as mentions, so it sounds the same everywhere; Gemini can also see pictures |
 | @mentions and replies in other channels | `MENTION_PROVIDER` / `MENTION_MODEL` | Same as `/settleargument` | Where a useful answer matters most |
 
 The "not contributing" check reports whether it's sure. Only when it isn't (a borderline message, or slang and in-jokes it can't place) does the bot ask the second-opinion model, which keeps Gemini's daily allowance for settling arguments and mentions. If the cheap models are all rate-limited, that message's AI check is skipped instead of falling back to Gemini.

@@ -9,6 +9,7 @@ Providers:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -121,7 +122,7 @@ CHAT_PROMPT = """You are {name}, one of the regulars in a Discord group chat. Th
 
 The conversation is the recent group chat. Each user message holds one or more lines written as "name: message", and the assistant messages are what you said earlier. Write your next message, replying to the last line and following on from what's being talked about.
 
-Every reply has to make sense as a direct answer to the last message: say what you actually mean first, and if someone asks why, give a real reason. Stay in character the whole time and text like a real person in the group, not an assistant: usually 2 to 5 words and never more than 15, all lowercase. Say things plainly, without similes, comparisons or metaphors, and without stringing comma-separated bits together. You're just chatting, so don't hand people tasks or advice; telling someone to shut up or stop annoying you is fine. You curse casually, the way teens text each other: shit, fuck, damn, hell, ass, stfu and the like come up often, dropped in naturally rather than in every line. Have your own opinions and push back when you disagree instead of going along with people. React to what people say instead of asking them questions, and don't quote people's words back at them. If you can't tell what someone means, say so in character instead of guessing. Don't use try-hard words like vibe, slay, bestie, fam or lit, and say "bro" only now and then.
+Every reply has to make sense as a direct answer to the last message: say what you actually mean first, and if someone asks why, give a real reason. Stay in character the whole time and text like a real person in the group, not an assistant: usually 2 to 5 words for banter and never more than 15, all lowercase. When someone asks you something, even something dumb, actually answer it: give your real take and a quick reason or fact, in character, instead of just insulting them. Say things plainly, without similes, comparisons or metaphors, and without stringing comma-separated bits together. You're just chatting, so don't hand people tasks or advice; telling someone to shut up or stop annoying you is fine. You curse casually, the way teens text each other: shit, fuck, damn, hell, ass, stfu and the like come up often, dropped in naturally rather than in every line. Have your own opinions and push back when you disagree instead of going along with people. React to what people say instead of asking them questions, and don't quote people's words back at them. If you can't tell what someone means, say so in character instead of guessing. If someone shares an image, react to what's actually in it. Stay consistent with yourself: don't contradict what you've said before, here or in other channels, and don't reuse a comeback you already used; if someone keeps repeating the same jab, say something new or brush it off. Don't use try-hard words like vibe, slay, bestie, fam or lit, and say "bro" only now and then.
 
 Slang you understand. Each one says when it fits, with an example line for that situation; use a word or line only when the conversation is actually in that situation, never as a stock phrase dropped in anywhere. Most of your messages use none, and never stack them or repeat the one you just used.
 {slang}
@@ -298,12 +299,26 @@ def drop_names(text: str, names: list[str]) -> str:
     return re.sub(rf"\s*,\s*{name}\b(?=\s*(?:[,.!?]|$))", "", text, flags=re.IGNORECASE)  # "..., tkum."
 
 
-def reply_issues(reply: str | None, recent: list[str]) -> list[str]:
+QUESTION = re.compile(
+    r"\?\s*$|^(?:could|would|can|is|are|was|were|do|does|did|will|should|who|what|whats|when|where|why|how|which|whos)\b",
+    re.IGNORECASE,
+)
+
+
+def is_question(text: str, bot_name: str) -> bool:
+    """Whether a message asks the bot something ("@Bot could ja morant dunk over the great wall")."""
+    text = text.replace(f"@{bot_name}", "").strip()
+    return bool(QUESTION.search(text))
+
+
+def reply_issues(reply: str | None, recent: list[str], asked: bool = False) -> list[str]:
     """What's wrong with a draft chat reply, as notes for a rewrite; empty if it's fine. `recent` are the bot's
-    own last few replies, oldest first."""
+    own last few replies, oldest first; `asked` means the message it answers was a question."""
     if not reply:
         return []
     issues = []
+    if asked and len(reply.split()) <= 3:
+        issues.append("they asked you a real question, so actually answer it with your take and a quick reason, still short and in character.")
     banned = sorted({word.lower() for word in BANNED_WORDS.findall(reply)})
     if banned:
         issues.append(f"don't say {' or '.join(banned)}.")
@@ -414,19 +429,25 @@ def parse_ruling(text: str | None) -> Ruling | None:
         return None
 
 
+Image = tuple  # (mime type, bytes) of a picture someone shared
+
+
 class Judge:
     """Shared prompts; each provider only implements send()."""
 
     model: str
+    sees_images = False  # whether the model can look at pictures
 
     @property
     def last_model(self) -> str:
         """The model that produced the most recent answer."""
         return self.model
 
-    async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
+    async def send(
+        self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int, images: list = (),
+    ) -> str | None:
         """The model's answer to a conversation of ("user" | "assistant", text) turns: JSON matching `schema`,
-        or plain text when schema is None. None on failure."""
+        or plain text when schema is None. `images` belong to the last turn. None on failure."""
         raise NotImplementedError
 
     async def complete(self, system: str, prompt: str, schema: dict | None, max_tokens: int) -> str | None:
@@ -456,20 +477,29 @@ class Judge:
             ruling.reply = casual(ruling.reply, emojis_allowed=persona_emojis) or ruling.reply
         return ruling
 
-    async def chat(self, name: str, persona: str, history: list[tuple[str, str]], author: str) -> str | None:
-        """An in-character reply to the last message in `history`, or None if the model couldn't be reached."""
+    async def chat(
+        self, name: str, persona: str, history: list[tuple[str, str]], author: str,
+        images: list = (), elsewhere: list[tuple[str, str]] = (),
+    ) -> str | None:
+        """An in-character reply to the last message in `history`, or None if the model couldn't be reached.
+        `images` are pictures in (or replied to by) that message; `elsewhere` is (channel, text) of the bot's recent
+        replies in other channels, so it stays consistent across the server."""
         system = CHAT_PROMPT.format(name=name, persona=persona, slang=SLANG)
+        if elsewhere:
+            said = "\n".join(f"- #{channel}: {text[:200]}" for channel, text in elsewhere)
+            system += f"\n\nThings you said recently in other channels (stay consistent with them):\n{said}"
         turns = build_chat_turns(history, name)
         recent = [text for speaker, text in history if speaker == name][-3:]
         max_tokens = CHAT_TOKENS.get(getattr(self, "effort", None), 768)
-        reply = clean_reply(await self.send(system, turns, None, max_tokens))
-        issues = reply_issues(reply, recent)
+        reply = clean_reply(await self.send(system, turns, None, max_tokens, images))
+        asked = bool(history) and history[-1][0] != name and is_question(history[-1][1], name)
+        issues = reply_issues(reply, recent, asked)
         if issues:
             # One rewrite with a note, the way a person would rephrase; the reply's tidy-up handles the rest.
             log.info("Rewriting chat reply %r: %s", reply, " ".join(issues))
             role, last = turns[-1]
             note = f"{last}\n\n(note for your next message only: {' '.join(issues)})"
-            reply = clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, max_tokens)) or reply
+            reply = clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, max_tokens, images)) or reply
         # No emoji two messages in a row, so they stay occasional even when the personality loves them.
         previous = recent[-1] if recent else ""
         names = name_variants([speaker for speaker, _ in history if speaker != name])
@@ -481,6 +511,8 @@ class Judge:
 
 
 class ClaudeJudge(Judge):
+    sees_images = True
+
     def __init__(self, model: str, client=None):
         import anthropic
 
@@ -488,9 +520,18 @@ class ClaudeJudge(Judge):
         self.model = model
         self.client = client or anthropic.AsyncAnthropic()
 
-    async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
+    async def send(
+        self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int, images: list = (),
+    ) -> str | None:
         anthropic = self._anthropic
         output_config = {"effort": "low"}
+        messages = [{"role": role, "content": text} for role, text in turns]
+        if images:
+            pictures = [
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.b64encode(data).decode()}}
+                for mime, data in images
+            ]
+            messages[-1]["content"] = pictures + [{"type": "text", "text": messages[-1]["content"]}]
         if schema is not None:
             output_config["format"] = {"type": "json_schema", "schema": schema}
         try:
@@ -498,7 +539,7 @@ class ClaudeJudge(Judge):
                 model=self.model,
                 max_tokens=max_tokens,
                 system=system,
-                messages=[{"role": role, "content": text} for role, text in turns],
+                messages=messages,
                 output_config=output_config,
             )
         except anthropic.RateLimitError:
@@ -518,6 +559,8 @@ class ClaudeJudge(Judge):
 
 
 class GeminiJudge(Judge):
+    sees_images = True
+
     def __init__(self, model: str, client=None):
         from google import genai
         from google.genai import errors, types
@@ -528,9 +571,16 @@ class GeminiJudge(Judge):
         # Reads GEMINI_API_KEY.
         self.client = client or genai.Client(http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
 
-    async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
-        errors = self._errors
-        contents = [{"role": "model" if role == "assistant" else "user", "parts": [{"text": text}]} for role, text in turns]
+    async def send(
+        self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int, images: list = (),
+    ) -> str | None:
+        errors, types = self._errors, self._types
+        contents = [
+            types.Content(role="model" if role == "assistant" else "user", parts=[types.Part(text=text)])
+            for role, text in turns
+        ]
+        if images:
+            contents[-1].parts[:0] = [types.Part.from_bytes(data=data, mime_type=mime) for mime, data in images]
         json_mode = {"response_mime_type": "application/json", "response_json_schema": schema} if schema else {}
         config = self._types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_tokens, **json_mode)
         try:
@@ -568,9 +618,14 @@ class OpenAICompatibleJudge(Judge):
                 self.effort = effort or default
                 self.extra["reasoning_effort"] = self.effort
 
-    async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
+    async def send(
+        self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int, images: list = (),
+    ) -> str | None:
         openai = self._openai
         extra = dict(self.extra)
+        if images:  # these models can't see pictures, so at least say there was one
+            role, text = turns[-1]
+            turns = turns[:-1] + [(role, f"{text}\n(they shared {len(images)} image(s) you can't see)")]
         if schema is not None:
             # Best-effort schema (strict off) works on more models; the prompt also asks for JSON.
             extra["response_format"] = {"type": "json_schema", "json_schema": {"name": "answer", "schema": schema}}
@@ -647,9 +702,17 @@ class FallbackJudge(Judge):
     def last_model(self) -> str:
         return self._last_model
 
-    async def send(self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int) -> str | None:
-        for judge, after in zip(self.judges, self.judges[1:] + [None]):
-            answer = await judge.send(system, turns, schema, max_tokens)
+    @property
+    def sees_images(self) -> bool:
+        return any(judge.sees_images for judge in self.judges)
+
+    async def send(
+        self, system: str, turns: list[tuple[str, str]], schema: dict | None, max_tokens: int, images: list = (),
+    ) -> str | None:
+        # With pictures, models that can see them go first.
+        order = sorted(self.judges, key=lambda judge: not judge.sees_images) if images else self.judges
+        for judge, after in zip(order, order[1:] + [None]):
+            answer = await judge.send(system, turns, schema, max_tokens, images)
             if answer and answer.strip():
                 self._last_model = judge.model
                 return answer

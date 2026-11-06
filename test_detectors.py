@@ -111,6 +111,7 @@ class FakeGemini:
 
 
 CONTEXT = [("amy", "who's playing tonight?")]
+BANTER = CONTEXT + [("bob", "i lost again lol")]  # ends on a statement, so short replies don't need a rewrite
 
 
 class JudgeTests(unittest.TestCase):
@@ -133,7 +134,7 @@ class JudgeTests(unittest.TestCase):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=fake)
         verdict = asyncio.run(judge.judge("dave", CONTEXT, "ur all idiots lol"))
         self.assertEqual(verdict.verdict, "disruptive")
-        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"][0]["parts"][0]["text"])
+        self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"][0].parts[0].text)
         self.assertEqual(fake.last_kwargs["config"].response_mime_type, "application/json")
 
     def test_moderation_knows_server_slang_and_running_jokes(self):
@@ -186,7 +187,7 @@ class JudgeTests(unittest.TestCase):
         fake = FakeGemini("fair")
         history = [("amy", "yianni is a dictator"), ("bob", "fr"), ("Spreader", "kim john-un strikes again"), ("amy", "deadass")]
         asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).chat("Spreader", "x", history, "amy"))
-        turns = [(c["role"], c["parts"][0]["text"]) for c in fake.last_kwargs["contents"]]
+        turns = [(c.role, c.parts[0].text) for c in fake.last_kwargs["contents"]]
         self.assertEqual(turns, [
             ("user", "amy: yianni is a dictator\nbob: fr"),
             ("model", "kim john-un strikes again"),
@@ -317,19 +318,30 @@ class ChatRewriteTests(unittest.TestCase):
         fake = FakeGeminiSequence("ur vibe cooked bro", "ur so cooked")
         self.assertEqual(self.chat(fake), "ur so cooked")
         self.assertEqual(len(fake.requests), 2)
-        self.assertIn("don't say vibe", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+        self.assertIn("don't say vibe", fake.requests[1]["contents"][-1].parts[-1].text)
 
     def test_slang_twice_in_a_row_gets_rewritten(self):
         history = CONTEXT + [("S", "yeah fine tuff"), ("amy", "why is ben a chud")]
         fake = FakeGeminiSequence("mid af bro", "cause he never shuts up")
         self.assertEqual(self.chat(fake, history), "cause he never shuts up")
-        self.assertIn("plainly", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+        self.assertIn("plainly", fake.requests[1]["contents"][-1].parts[-1].text)
 
     def test_slang_used_in_recent_replies_gets_rewritten(self):
         history = CONTEXT + [("S", "ur mid at this"), ("amy", "ok"), ("S", "whatever"), ("amy", "how was the movie")]
         fake = FakeGeminiSequence("mid af", "it was alright")
         self.assertEqual(self.chat(fake, history), "it was alright")
-        self.assertIn("you just said mid", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+        self.assertIn("you just said mid", fake.requests[1]["contents"][-1].parts[-1].text)
+
+    def test_question_gets_a_real_answer(self):
+        history = CONTEXT + [("nav", "@S could ja morant dunk over the Great Wall of china")]
+        fake = FakeGeminiSequence("ur cooked", "nah the wall is like 25 feet ja aint that springy")
+        self.assertEqual(self.chat(fake, history), "nah the wall is like 25 feet ja aint that springy")
+        self.assertIn("actually answer it", fake.requests[1]["contents"][-1].parts[-1].text)
+
+    def test_short_banter_is_fine_when_not_asked(self):
+        fake = FakeGeminiSequence("ur cooked")
+        self.assertEqual(self.chat(fake, CONTEXT + [("nav", "i lost again lol")]), "ur cooked")
+        self.assertEqual(len(fake.requests), 1)
 
     def test_fine_reply_is_sent_once(self):
         fake = FakeGeminiSequence("shut up you clown")
@@ -373,7 +385,7 @@ class OpenAICompatibleTests(unittest.TestCase):
 
     def test_short_rate_limit_is_retried_once(self):
         fake = FakeCompletions("ok fine", error=rate_limit(retry_after="0.01"), fail_times=1)
-        self.assertEqual(asyncio.run(groq_judge(fake).chat("Spreader", "x", CONTEXT, "amy")), "ok fine")
+        self.assertEqual(asyncio.run(groq_judge(fake).chat("Spreader", "x", BANTER, "bob")), "ok fine")
         self.assertEqual(fake.calls, 2)
 
     def test_groq_reasoning_effort_and_small_chat_budget(self):
@@ -394,7 +406,7 @@ class StubJudge(Judge):  # canned answer
         self.answer = answer
         self.calls = 0
 
-    async def send(self, system, turns, schema, max_tokens):
+    async def send(self, system, turns, schema, max_tokens, images=()):
         self.calls += 1
         return self.answer
 
@@ -411,7 +423,7 @@ class FallbackTests(unittest.TestCase):
     def test_uses_first_model_that_answers(self):
         busy, fast, spare = StubJudge("qwen", None), StubJudge("gpt-oss-20b", "yo"), StubJudge("gemini", "hi")
         judge = FallbackJudge([busy, fast, spare])
-        self.assertEqual(asyncio.run(judge.chat("Spreader", "x", CONTEXT, "amy")), "yo")
+        self.assertEqual(asyncio.run(judge.chat("Spreader", "x", BANTER, "bob")), "yo")
         self.assertEqual((busy.calls, fast.calls, spare.calls), (1, 1, 0))
         self.assertEqual(judge.last_model, "gpt-oss-20b")
         self.assertIsNone(asyncio.run(FallbackJudge([busy, StubJudge("b", "  ")]).chat("S", "x", CONTEXT, "amy")))
@@ -480,6 +492,46 @@ class SecondOpinionTests(unittest.TestCase):
         verdict = asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).judge("amy", CONTEXT, "hm"))
         self.assertFalse(verdict.confident)
         self.assertIn("confident", fake.last_kwargs["config"].response_json_schema["required"])
+
+
+PNG = ("image/png", b"\x89PNG fake bytes")
+
+
+class ImageAndMemoryTests(unittest.TestCase):
+    def test_gemini_gets_the_picture(self):
+        fake = FakeGemini("thats a w fit")
+        asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).chat("S", "x", CONTEXT, "amy", images=[PNG]))
+        parts = fake.last_kwargs["contents"][-1].parts
+        self.assertEqual((parts[0].inline_data.mime_type, parts[0].inline_data.data), PNG)
+        self.assertIn("amy: who's playing tonight?", parts[-1].text)
+
+    def test_groq_is_told_about_a_picture_it_cant_see(self):
+        fake = FakeCompletions("cant see it")
+        asyncio.run(groq_judge(fake).chat("S", "x", CONTEXT, "amy", images=[PNG]))
+        self.assertIn("1 image(s) you can't see", fake.last_kwargs["messages"][-1]["content"])
+
+    def test_claude_gets_the_picture(self):
+        messages = FakeMessages(None)
+        messages.payload = "nice"
+        judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
+        asyncio.run(judge.send("sys", [("user", "look")], None, 100, images=[PNG]))
+        blocks = messages.last_kwargs["messages"][-1]["content"]
+        self.assertEqual((blocks[0]["type"], blocks[0]["source"]["media_type"], blocks[-1]["text"]), ("image", "image/png", "look"))
+
+    def test_fallback_tries_models_that_can_see_first(self):
+        blind, sighted = StubJudge("gpt-oss", "blind answer"), StubJudge("gemini", "sees it")
+        sighted.sees_images = True
+        judge = FallbackJudge([blind, sighted])
+        self.assertEqual(asyncio.run(judge.send("s", [("user", "x")], None, 10, images=[PNG])), "sees it")
+        self.assertEqual(asyncio.run(judge.send("s", [("user", "x")], None, 10)), "blind answer", "no images: normal order")
+
+    def test_recent_replies_elsewhere_are_in_the_prompt(self):
+        fake = FakeGemini("nah")
+        asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).chat(
+            "S", "x", CONTEXT, "amy", elsewhere=[("general", "i aint gay i just hate your jokes")]))
+        system = fake.last_kwargs["config"].system_instruction
+        self.assertIn("#general: i aint gay i just hate your jokes", system)
+        self.assertIn("Stay consistent", system)
 
 
 class EffortTests(unittest.TestCase):

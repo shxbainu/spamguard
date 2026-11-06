@@ -67,7 +67,12 @@ AI_STRIKES = env_int("AI_STRIKES", 3)
 AI_STRIKE_WINDOW_SECONDS = env_int("AI_STRIKE_WINDOW_SECONDS", 600)
 AI_MAX_PER_MINUTE = env_int("AI_MAX_PER_MINUTE", 12)
 AI_MIN_LENGTH = env_int("AI_MIN_LENGTH", 3)
-CONTEXT_MESSAGES = env_int("CONTEXT_MESSAGES", 15)
+CONTEXT_MESSAGES = env_int("CONTEXT_MESSAGES", 15)  # what the "not contributing" check sees
+CHAT_CONTEXT_MESSAGES = env_int("CHAT_CONTEXT_MESSAGES", 30)  # what the bot remembers when chatting
+# Pictures the AI chat can look at (models that can't see get a note instead).
+SEEABLE_IMAGES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+MAX_IMAGES = 3
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 # /settleargument and the chat each pick their own AI; empty means the same as the one before.
 SETTLE_PROVIDER = (os.getenv("SETTLE_PROVIDER") or AI_PROVIDER).strip().lower()
@@ -103,6 +108,46 @@ DB_PATH = Path(__file__).with_name("spamguard.db")
 log = logging.getLogger("spamguard")
 # The Gemini SDK logs "AFC is enabled" on every call; the bot logs which model answered instead.
 logging.getLogger("google_genai.models").setLevel(logging.WARNING)
+
+
+def history_line(message: discord.Message, is_gif: bool | None = None) -> tuple[str, str]:
+    """(who, what) for the chat memory. The bot's own messages use its display name, which the AI reads as
+    "what I said"; pictures are marked so the bot knows one was shared."""
+    if is_gif is None:
+        is_gif = looks_like_gif(
+            message.clean_content,
+            attachments=[(a.filename, a.content_type) for a in message.attachments],
+            embeds=[(e.type, e.url) for e in message.embeds],
+            sticker_count=len(message.stickers),
+        )
+    me = message.guild.me
+    who = me.display_name if message.author.id == me.id else speaker(message.author)
+    if is_gif:
+        return who, "[GIF]"
+    text = message.clean_content
+    if any((a.content_type or "").startswith("image/") for a in message.attachments):
+        text = f"{text} [image]".strip()
+    return who, text or "[attachment]"
+
+
+async def images_in(message: discord.Message) -> list[tuple[str, bytes]]:
+    """Pictures in the message, or in the message it replies to, that the AI can look at."""
+    attachments = list(message.attachments)
+    ref = message.reference
+    if ref is not None and isinstance(ref.resolved, discord.Message):
+        attachments += ref.resolved.attachments
+    images = []
+    for attachment in attachments:
+        mime = (attachment.content_type or "").split(";")[0]
+        if mime not in SEEABLE_IMAGES or attachment.size > MAX_IMAGE_BYTES:
+            continue
+        try:
+            images.append((mime, await attachment.read()))
+        except discord.HTTPException:
+            continue
+        if len(images) >= MAX_IMAGES:
+            break
+    return images
 
 
 def speaker(member: discord.abc.User) -> str:
@@ -141,7 +186,12 @@ class SpamGuard(discord.Client):
         self.last_reply: dict[int, float] = {}  # user id -> monotonic time the bot last answered them
 
         # Recent messages per channel, used as context for the AI judge.
-        self.history: dict[int, deque[tuple[str, str]]] = defaultdict(lambda: deque(maxlen=CONTEXT_MESSAGES))
+        self.history: dict[int, deque[tuple[str, str]]] = defaultdict(
+            lambda: deque(maxlen=max(CONTEXT_MESSAGES, CHAT_CONTEXT_MESSAGES))
+        )
+        self.backfilled: set[int] = set()  # channels whose history was reloaded from Discord after a restart
+        # (channel id, channel name, text) of the bot's latest replies anywhere, so it stays consistent across channels.
+        self.recent_replies: deque[tuple[int, str, str]] = deque(maxlen=20)
         # (guild_id, user_id) -> monotonic time their current punishment ends.
         self.penalized: dict[tuple[int, int], float] = {}
         # (guild_id, user_id) -> role ids to give back after a kick.
@@ -241,8 +291,8 @@ class SpamGuard(discord.Client):
             sticker_count=len(message.stickers),
         )
         history = self.history[message.channel.id]
-        context = list(history)
-        history.append((speaker(message.author), "[GIF]" if is_gif else text or "[attachment]"))
+        context = list(history)[-CONTEXT_MESSAGES:]
+        history.append(history_line(message, is_gif))
 
         in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
         if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
@@ -306,16 +356,23 @@ class SpamGuard(discord.Client):
         name = message.guild.me.display_name
         try:
             async with message.channel.typing():
+                await self.backfill(message)
                 in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
                 chatter = self.chatter if in_chat_channel else (self.mention_chatter or self.chatter)
-                text = await chatter.chat(name, PERSONA, list(history), speaker(message.author))
+                images = await images_in(message) if chatter.sees_images else []
+                elsewhere = [(ch, said) for cid, ch, said in self.recent_replies if cid != message.channel.id][-8:]
+                text = await chatter.chat(
+                    name, PERSONA, list(history)[-CHAT_CONTEXT_MESSAGES:], speaker(message.author),
+                    images=images, elsewhere=elsewhere,
+                )
             if not text:
                 return
             where = "chat channel" if in_chat_channel else "mention"
             log.info("Reply (%s) by %s: %r", where, chatter.last_model, text[:100])
+            seen = f" (looked at {len(images)} image{'s' if len(images) > 1 else ''})" if images else ""
             self.log_event(
                 message.guild, message.channel, "reply", message.author, content=text[:500], model=chatter.last_model,
-                reason=where, detail=f"replying to: {message.clean_content[:300]}",
+                reason=where + seen, detail=f"replying to: {message.clean_content[:300]}",
             )
             # No pings from the AI, ever (it can't @everyone or mention people).
             await message.reply(text[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions.none())
@@ -323,6 +380,25 @@ class SpamGuard(discord.Client):
             log.warning("Couldn't send a chat reply in #%s: %s", getattr(message.channel, "name", "?"), e)
             return
         history.append((name, text))
+        self.recent_replies.append((message.channel.id, getattr(message.channel, "name", "?"), text))
+
+    async def backfill(self, message: discord.Message) -> None:
+        """After a restart the bot remembers nothing, so the first time it chats in a channel it reads that
+        channel's recent messages from Discord."""
+        channel = message.channel
+        if channel.id in self.backfilled:
+            return
+        self.backfilled.add(channel.id)
+        try:
+            older = [m async for m in channel.history(limit=CHAT_CONTEXT_MESSAGES, before=message)]
+        except discord.HTTPException as e:
+            log.warning("Couldn't read earlier messages in #%s: %s", getattr(channel, "name", "?"), e)
+            return
+        history = self.history[channel.id]
+        current = history_line(message)
+        history.clear()
+        history.extend(history_line(m) for m in reversed(older))
+        history.append(current)
 
     async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
         verdict = await self.judge.judge(speaker(message.author), context, text, PERSONA)
