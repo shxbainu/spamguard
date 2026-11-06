@@ -198,57 +198,34 @@ The free tier covers exactly **one** e2-micro in **us-west1, us-central1 or us-e
 3. Set **Region** to `us-central1` (or us-west1 / us-east1), **Machine type** to `e2-micro`, and under **Boot disk** pick **Debian 12** with a **Standard persistent disk**, 10–30 GB.
 4. Click **Create**, then click **SSH** next to the VM to open a terminal in your browser.
 
-### 2. Install the bot
+### 2. Install and start the bot
 
-In the VM's SSH window:
+1. **Stop the bot on your own computer** (`pkill -f bot.py`), so two copies don't answer every message twice.
+2. In the VM's SSH window, click **Upload file** (the up-arrow button at the top) and upload these from your computer's `spamguard` folder, one at a time:
+   - `deploy/setup.sh`
+   - `.env` (hidden in Finder: press **Cmd+Shift+.** in the file picker to show it)
+   - `spamguard.db`, if you want to keep the punishment history
+3. Run:
 
-```bash
-sudo apt update && sudo apt install -y git gh python3-venv
-gh auth login
-gh repo clone shxbainu/spamguard
-cd spamguard
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-nano .env
-```
+   ```bash
+   bash setup.sh
+   ```
 
-`gh auth login` is needed because the repo is private: choose GitHub.com → HTTPS → "Login with a web browser" and enter the code it shows. In `nano`, paste the contents of your `.env` from your computer, then save with **Ctrl+O**, **Enter**, **Ctrl+X**.
+   Because the repo is private, it first asks you to log in to GitHub: open the link it shows on your phone or computer and enter the code. It then installs everything, starts the bot, and shows the startup log, which should include `Logged in as …` and your personality.
 
-Stop the bot on your own computer first, so two copies aren't running at once.
+The bot now starts on boot and restarts if it crashes, so you can close the SSH window.
 
-### 3. Keep it running
-
-This makes the bot start on boot and restart if it crashes:
-
-```bash
-sudo tee /etc/systemd/system/spreader.service > /dev/null <<EOF
-[Unit]
-Description=Ben's Butt Spreader
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=$USER
-WorkingDirectory=$HOME/spamguard
-ExecStart=$HOME/spamguard/.venv/bin/python bot.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl enable --now spreader
-```
-
-Useful commands on the VM:
-
-| Command | Does |
+| Command (on the VM) | Does |
 |---|---|
-| `sudo systemctl status spreader` | Is it running? |
+| `bash ~/spamguard/deploy/setup.sh` | Update to the newest code and restart |
 | `journalctl -u spreader -f` | Live logs (Ctrl+C to stop watching) |
-| `cd ~/spamguard && git pull && sudo systemctl restart spreader` | Update to the newest code |
+| `sudo systemctl status spreader` | Is it running? |
+| `nano ~/spamguard/.env`, then `sudo systemctl restart spreader` | Change a setting or the personality |
 
-You can close the SSH window; the bot keeps running.
+### 3. Keep it free
+
+- Stay on **one** `e2-micro` in us-west1, us-central1 or us-east1 with a standard disk. The bot uses under 100 MB of the VM's 1 GB of memory.
+- Google Cloud may show a "free trial" credit too; the Always Free VM keeps working after it ends. Set a budget alert (**Billing → Budgets & alerts**, e.g. $1) so you'd hear about any charge.
 
 ### 4. See the dashboard
 
