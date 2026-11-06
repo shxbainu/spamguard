@@ -169,7 +169,7 @@ class JudgeTests(unittest.TestCase):
 
     def test_chat_replaces_em_dashes(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("keep that energy high\u2014you're the best \u2013 fr"))
-        self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "keep that energy high, you're the best, fr")
+        self.assertEqual(asyncio.run(judge.chat("S", "x", CONTEXT, "amy")), "keep that energy high you're the best fr")
 
     def test_chat_sends_real_turns(self):
         fake = FakeGemini("fair")
@@ -198,12 +198,12 @@ class JudgeTests(unittest.TestCase):
             ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "just trying to keep the vibe interesting"),
             ("alright, i'll zip it. \U0001F644", "i'll zip it \U0001F644"),
             ("Yo Shxbainu, hope that \u201clast test\u201d wasn\u2019t another one of your \u201cI\u2019m basically a walking Wikipedia\u201d essays \U0001F602. Get some sleep before you turn into a meme",
-             "yo shxbainu, hope that last test wasn\u2019t another one of your i\u2019m basically a walking"),
+             "yo shxbainu hope that last test wasn\u2019t another one of your i\u2019m basically a walking"),
             ("Sir Shxbainu, my man. Guess I\u2019ll have to bow down to the ultimate test-master. Good luck, don\u2019t let the questions bite",
-             "sir shxbainu, my man. guess i\u2019ll have to bow down to the ultimate test-master"),
+             "sir shxbainu my man. guess i\u2019ll have to bow down to the ultimate test-master"),
             ("nah. why would i even care? LMAO you wild", "nah. lmao you wild"),
             ("why would you even say that?", "why would you even say that?"),  # only a question: kept
-            ("that's crazy, who asked?", "that's crazy, who asked?"),  # too short to be a tacked-on question
+            ("that's crazy, who asked?", "that's crazy who asked?"),  # too short to be a tacked-on question
             ("bro, why?", "why?"),
             ("why would anyone care about that?", "why would anyone care about that?"),
         )
@@ -229,6 +229,17 @@ class JudgeTests(unittest.TestCase):
         for raw, expected in cases:
             judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
             self.assertEqual(asyncio.run(judge.chat("S", "x", history, "tkum22")), expected, raw)
+
+    def test_chat_uses_only_persona_emojis_no_commas_and_lowk(self):
+        persona = "edgy gen z chatter. use emojis like \U0001F62D\u270C\ufe0f\U0001F940\U0001FAE9."
+        for raw, expected in (
+            ("nah, you\u2019re basic \U0001F643", "nah you\u2019re basic"),
+            ("\U0001F974", None),
+            ("shut up, bum \u270C\ufe0f", "shut up bum \u270C\ufe0f"),
+            ("yeah, lowkey respect", "yeah lowk respect"),
+        ):
+            judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(raw))
+            self.assertEqual(asyncio.run(judge.chat("S", persona, CONTEXT, "amy")), expected, raw)
 
     def test_chat_cuts_opening_echo_question(self):
         for raw, expected in (
