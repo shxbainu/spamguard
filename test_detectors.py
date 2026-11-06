@@ -204,7 +204,7 @@ class JudgeTests(unittest.TestCase):
 
     def test_chat_cleans_real_replies_from_discord(self):
         cases = (
-            ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "just trying to keep the vibe interesting"),
+            ("lol, just trying to keep the vibe interesting, you feelin\u2019 the drama?", "just trying to keep the interesting"),  # "vibe" cut when the rewrite still says it
             ("alright, i'll zip it. \U0001F644", "i'll zip it \U0001F644"),
             ("Yo Shxbainu, hope that \u201clast test\u201d wasn\u2019t another one of your \u201cI\u2019m basically a walking Wikipedia\u201d essays \U0001F602. Get some sleep before you turn into a meme",
              "yo shxbainu hope that last test wasn\u2019t another one of your i\u2019m basically a walking"),
@@ -291,6 +291,48 @@ def rate_limit(retry_after):
 
 def groq_judge(completions, model="openai/gpt-oss-120b"):
     return OpenAICompatibleJudge("groq", model, client=SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+
+
+class FakeGeminiSequence(FakeGemini):
+    """Answers with each text in turn, recording every request."""
+
+    def __init__(self, *texts):
+        super().__init__(None)
+        self.texts = list(texts)
+        self.requests = []
+
+    async def generate_content(self, **kwargs):
+        self.requests.append(kwargs)
+        self.last_kwargs = kwargs
+        return SimpleNamespace(text=self.texts.pop(0) if len(self.texts) > 1 else self.texts[0])
+
+
+class ChatRewriteTests(unittest.TestCase):
+    def chat(self, fake, history=CONTEXT):
+        return asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).chat("S", "x", history, "amy"))
+
+    def test_try_hard_word_gets_one_rewrite(self):
+        fake = FakeGeminiSequence("ur vibe cooked bro", "ur so cooked")
+        self.assertEqual(self.chat(fake), "ur so cooked")
+        self.assertEqual(len(fake.requests), 2)
+        self.assertIn("don't say vibe", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+
+    def test_slang_twice_in_a_row_gets_rewritten(self):
+        history = CONTEXT + [("S", "yeah fine tuff"), ("amy", "why is ben a chud")]
+        fake = FakeGeminiSequence("mid af bro", "cause he never shuts up")
+        self.assertEqual(self.chat(fake, history), "cause he never shuts up")
+        self.assertIn("plainly", fake.requests[1]["contents"][-1]["parts"][0]["text"])
+
+    def test_fine_reply_is_sent_once(self):
+        fake = FakeGeminiSequence("shut up you clown")
+        self.assertEqual(self.chat(fake), "shut up you clown")
+        self.assertEqual(len(fake.requests), 1)
+
+    def test_bro_filler_trimmed(self):
+        self.assertEqual(self.chat(FakeGeminiSequence("lol good luck bro \U0001F940")), "lol good luck \U0001F940")
+        after_bro = CONTEXT + [("S", "nah bro"), ("amy", "ok")]
+        self.assertEqual(self.chat(FakeGeminiSequence("bro stfu"), after_bro), "stfu")
+        self.assertEqual(self.chat(FakeGeminiSequence("bro stfu")), "bro stfu", "fine when it hasn't said bro lately")
 
 
 class ChatTurnTests(unittest.TestCase):
