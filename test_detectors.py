@@ -157,12 +157,14 @@ class JudgeTests(unittest.TestCase):
         judge = ClaudeJudge("claude-haiku-5-5", client=SimpleNamespace(messages=messages))
         transcript = [("amy", "hot dog is a sandwich"), ("dave", "no way")]
         result = asyncio.run(judge.settle(transcript, "amy", comment="tell dave he's wrong", persona="a pirate"))
-        self.assertEqual((result.winner, result.reply), ("amy", "Arr, amy wins this one."))
+        self.assertEqual((result.winner, result.reply), ("amy", "arr amy wins this one"))
         prompt = messages.last_kwargs["messages"][0]["content"]
         self.assertIn("dave: no way", prompt)
         self.assertIn("amy asked you", prompt)
         self.assertIn("tell dave he's wrong", prompt)
         self.assertIn("a pirate", messages.last_kwargs["system"])
+        self.assertIn("Always pick a winner", messages.last_kwargs["system"])
+        self.assertEqual(result.reply, "arr amy wins this one", "reply tidied like chat")
 
     def test_gemini_settle_with_bad_answer_gives_none(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(json.dumps({"verdict": "ok"})))
