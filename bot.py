@@ -284,7 +284,7 @@ class SpamGuard(discord.Client):
         history.append((name, text))
 
     async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
-        verdict = await self.judge.judge(speaker(message.author), context, text)
+        verdict = await self.judge.judge(speaker(message.author), context, text, PERSONA)
         if verdict is None or verdict.ok:
             return
         member = message.author

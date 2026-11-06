@@ -136,6 +136,15 @@ class JudgeTests(unittest.TestCase):
         self.assertIn("amy: who's playing tonight?", fake.last_kwargs["contents"][0]["parts"][0]["text"])
         self.assertEqual(fake.last_kwargs["config"].response_mime_type, "application/json")
 
+    def test_moderation_knows_server_slang_and_running_jokes(self):
+        fake = FakeGemini(json.dumps({"verdict": "ok", "reason": "running joke"}))
+        persona = "calls YianniDestroys Kim John-Un"
+        asyncio.run(GeminiJudge("gemini-3.5-flash-lite", client=fake).judge("EMPBEN", CONTEXT, "kim john un", persona))
+        system = fake.last_kwargs["config"].system_instruction
+        self.assertIn("calls YianniDestroys Kim John-Un", system)
+        self.assertIn("mog: to completely outclass someone", system)
+        self.assertIn("running jokes", system)
+
     def test_gemini_garbage_answer_gives_no_verdict(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini("not json"))
         self.assertIsNone(asyncio.run(judge.judge("dave", CONTEXT, "hi")))
