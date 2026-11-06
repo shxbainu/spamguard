@@ -1,4 +1,5 @@
-"""SQLite storage for punishment history and each user's offense count."""
+"""SQLite storage: punishment history, offense counts, /shutup uses, and a rolling log of what the bot saw and
+decided (checked messages, its replies and rulings) for the dashboard."""
 from __future__ import annotations
 
 import sqlite3
@@ -33,14 +34,39 @@ CREATE TABLE IF NOT EXISTS shutups (
     target_id INTEGER NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    guild_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,              -- check (an AI-judged message), reply (bot chat), ruling (/settleargument)
+    user_id INTEGER,                 -- who wrote the message, or who the bot answered
+    user_name TEXT,
+    channel_name TEXT,
+    content TEXT,                    -- the member's message, or what the bot said
+    verdict TEXT,                    -- checks: ok, low_effort or disruptive
+    reason TEXT,                     -- why: the AI's reason, or a ruling's reasoning
+    model TEXT,                      -- which model decided or answered
+    escalated INTEGER NOT NULL DEFAULT 0,  -- checks: a second model was asked
+    overruled INTEGER NOT NULL DEFAULT 0,  -- checks: the second model disagreed with the first
+    detail TEXT                      -- extra context: the first model's call, strike count, what was replied to
+);
+CREATE INDEX IF NOT EXISTS events_created ON events (created_at);
 """
+
+EVENT_FIELDS = (
+    "guild_id", "kind", "user_id", "user_name", "channel_name", "content", "verdict", "reason", "model",
+    "escalated", "overruled", "detail",
+)
 
 
 class Store:
-    def __init__(self, path: str):
+    def __init__(self, path: str, event_days: float = 7):
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self.event_days = event_days
+        self._events_since_prune = 0
+        self.prune_events(time.time())
 
     # ---- offense counting --------------------------------------------------
 
@@ -102,6 +128,76 @@ class Store:
             (guild_id, user_id, target_id, now),
         )
         self.db.commit()
+
+    # ---- activity log ----------------------------------------------------------
+
+    def log_event(self, *, created_at: float | None = None, **fields) -> int:
+        """Records something the bot saw or did. Events older than `event_days` are cleared out as it goes."""
+        unknown = set(fields) - set(EVENT_FIELDS)
+        if unknown:
+            raise TypeError(f"unknown event fields: {sorted(unknown)}")
+        now = created_at or time.time()
+        names = ["created_at", *fields]
+        cursor = self.db.execute(
+            f"INSERT INTO events ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
+            [now, *(int(v) if isinstance(v, bool) else v for v in fields.values())],
+        )
+        self.db.commit()
+        self._events_since_prune += 1
+        if self._events_since_prune >= 200:
+            self.prune_events(time.time())
+        return cursor.lastrowid
+
+    def prune_events(self, now: float) -> None:
+        self.db.execute("DELETE FROM events WHERE created_at < ?", (now - self.event_days * 86400,))
+        self.db.commit()
+        self._events_since_prune = 0
+
+    def events(
+        self,
+        limit: int = 200,
+        kind: str | None = None,
+        user: str | None = None,
+        flagged: bool = False,
+        escalated: bool = False,
+    ) -> list[dict]:
+        query, args = "SELECT * FROM events WHERE 1 = 1", []
+        if kind:
+            query += " AND kind = ?"
+            args.append(kind)
+        if user:
+            query += " AND (user_name LIKE ? OR CAST(user_id AS TEXT) = ?)"
+            args += [f"%{user}%", user]
+        if flagged:
+            query += " AND verdict IS NOT NULL AND verdict != 'ok'"
+        if escalated:
+            query += " AND escalated = 1"
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        args.append(limit)
+        return [dict(row) for row in self.db.execute(query, args)]
+
+    def activity(self, now: float) -> dict:
+        """Counts for the last 24 hours, for the dashboard's summary cards."""
+        def count(where: str, *args) -> int:
+            return self.db.execute(
+                f"SELECT COUNT(*) FROM events WHERE created_at >= ? AND {where}", (now - 86400, *args),
+            ).fetchone()[0]
+
+        models = self.db.execute(
+            "SELECT model, COUNT(*) AS count FROM events WHERE created_at >= ? AND model IS NOT NULL "
+            "GROUP BY model ORDER BY count DESC",
+            (now - 86400,),
+        )
+        return {
+            "checked": count("kind = 'check'"),
+            "flagged": count("kind = 'check' AND verdict != 'ok'"),
+            "second_opinions": count("kind = 'check' AND escalated = 1"),
+            "overruled": count("kind = 'check' AND overruled = 1"),
+            "replies": count("kind = 'reply'"),
+            "rulings": count("kind = 'ruling'"),
+            "by_model": [dict(row) for row in models],
+            "kept_days": self.event_days,
+        }
 
     # ---- punishment history ------------------------------------------------
 

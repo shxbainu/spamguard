@@ -72,6 +72,27 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.shutups_used(1, 8, now=30, window=week), [], "per user")
         self.assertEqual(self.store.shutups_used(1, 7, now=week + 5, window=week), [10, 20], "oldest one expired")
 
+    def test_event_log_filters_counts_and_prunes(self):
+        now = time.time()
+        log = self.store.log_event
+        log(guild_id=1, kind="check", user_id=7, user_name="ben", content="wit", verdict="ok", reason="reaction",
+            model="gemini", escalated=True, overruled=True, detail="first check: gpt-oss-20b: low_effort (gibberish)")
+        log(guild_id=1, kind="check", user_id=7, user_name="ben", content="asdfgh", verdict="low_effort", reason="mash",
+            model="gemini", escalated=True, detail="strike 1 of 3 in a row")
+        log(guild_id=1, kind="reply", user_id=8, user_name="amy", content="syfm", model="gpt-oss-120b")
+        log(guild_id=1, kind="check", user_id=7, user_name="ben", content="old", verdict="ok", created_at=now - 9 * DAY)
+
+        self.assertEqual([e["content"] for e in self.store.events(kind="check", flagged=True)], ["asdfgh"])
+        self.assertEqual(len(self.store.events(escalated=True)), 2)
+        self.assertEqual([e["kind"] for e in self.store.events(user="amy")], ["reply"])
+        activity = self.store.activity(now)
+        self.assertEqual((activity["checked"], activity["flagged"], activity["second_opinions"], activity["overruled"],
+                          activity["replies"]), (2, 1, 2, 1, 1))
+        self.store.prune_events(now)
+        self.assertNotIn("old", [e["content"] for e in self.store.events()], "older than 7 days is cleared")
+        with self.assertRaises(TypeError):
+            log(guild_id=1, kind="check", surprise="x")
+
     def record(self, **overrides):
         fields = dict(guild_id=1, user_id=7, user_name="dave", channel_name="general", action="timeout",
                       duration_seconds=30, offense=1, category="gif", reason="GIF spam", evidence="4 GIFs")
@@ -127,6 +148,18 @@ class DashboardTests(unittest.TestCase):
                      duration_seconds=10, offense=1, category="gif", reason="GIF spam")
         self.assertEqual(self.call(store, "/api/punishments")[1][0]["user_id"], str(big))
         self.assertEqual(self.call(store, "/api/offenders")[1][0]["user_id"], str(big))
+
+    def test_event_api(self):
+        store = Store(":memory:")
+        big = 1222222222222222221
+        store.log_event(guild_id=1, kind="check", user_id=big, user_name="ben", content="wit", verdict="low_effort",
+                        reason="gibberish", model="gemini")
+        status, rows = self.call(store, "/api/events?kind=check&flagged=1")
+        self.assertEqual((status, rows[0]["user_id"], rows[0]["content"]), (200, str(big), "wit"))
+        status, stats = self.call(store, "/api/stats")
+        self.assertEqual(stats["activity"]["flagged"], 1)
+        status, page = self.call(store, "/")
+        self.assertIn("Message log", page)
 
     def test_reset_one_and_all(self):
         calls = []

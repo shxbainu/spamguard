@@ -1,4 +1,5 @@
-"""Small web dashboard listing every timeout and kick, served by the bot itself.
+"""Web dashboard served by the bot: punishments and why, current offense levels, the log of messages the AI
+checked (with its reasoning), and the bot's own replies and rulings.
 
 Run `python dashboard.py` to view the saved history without starting the bot.
 """
@@ -49,7 +50,8 @@ def create_app(
         return await handler(request)
 
     async def index(request: web.Request) -> web.Response:
-        return web.Response(text=PAGE.read_text(), content_type="text/html")
+        # no-cache so a browser picks up a new dashboard after the bot updates
+        return web.Response(text=PAGE.read_text(), content_type="text/html", headers={"Cache-Control": "no-cache"})
 
     async def punishments(request: web.Request) -> web.Response:
         q = request.query
@@ -62,9 +64,22 @@ def create_app(
         return web.json_response(ids_as_text(rows))
 
     async def stats(request: web.Request) -> web.Response:
-        stats = store.stats(time.time())
+        now = time.time()
+        stats = store.stats(now)
         stats["top_users_7d"] = ids_as_text(stats["top_users_7d"])
+        stats["activity"] = store.activity(now)
         return web.json_response(stats)
+
+    async def events(request: web.Request) -> web.Response:
+        q = request.query
+        rows = store.events(
+            limit=min(int(q.get("limit", 200)), 1000),
+            kind=q.get("kind") or None,
+            user=q.get("user") or None,
+            flagged=q.get("flagged") == "1",
+            escalated=q.get("escalated") == "1",
+        )
+        return web.json_response(ids_as_text(rows))
 
     async def offenders(request: web.Request) -> web.Response:
         return web.json_response(ids_as_text(store.active_offenders(time.time(), reset_after)))
@@ -87,6 +102,7 @@ def create_app(
         web.get("/api/punishments", punishments),
         web.get("/api/stats", stats),
         web.get("/api/offenders", offenders),
+        web.get("/api/events", events),
         web.post("/api/reset", reset),
     ])
     return app

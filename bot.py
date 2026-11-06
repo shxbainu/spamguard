@@ -89,6 +89,10 @@ SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
 SHUTUP_WINDOW = 7 * 86400
 SETTLE_COOLDOWN_SECONDS = env_int("SETTLE_COOLDOWN_SECONDS", 30)
 
+# Keep a log of checked messages and the bot's replies and rulings for the dashboard, for this many days.
+LOG_MESSAGES = env_bool("LOG_MESSAGES", True)
+LOG_DAYS = env_int("LOG_DAYS", 7)
+
 DASHBOARD_ENABLED = env_bool("DASHBOARD_ENABLED", True)
 DASHBOARD_HOST = os.getenv("DASHBOARD_HOST") or "127.0.0.1"
 DASHBOARD_PORT = env_int("DASHBOARD_PORT", 8080)
@@ -117,7 +121,7 @@ class SpamGuard(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.tree.error(self.on_app_command_error)
 
-        self.store = Store(str(DB_PATH))
+        self.store = Store(str(DB_PATH), event_days=LOG_DAYS)
         self.gifs = GifSpamDetector(GIF_LIMIT, GIF_WINDOW_SECONDS)
         self.repeats = RepeatDetector(REPEAT_LIMIT, REPEAT_WINDOW_SECONDS)
         self.strikes = StrikeTracker(AI_STRIKES, AI_STRIKE_WINDOW_SECONDS)
@@ -268,6 +272,15 @@ class SpamGuard(discord.Client):
         if self.judge and not is_gif and len(text.strip()) >= AI_MIN_LENGTH and self.ai_budget.take(now):
             self.spawn(self.check_contribution(message, context, text))
 
+    def log_event(self, guild: discord.Guild, channel, kind: str, member: discord.abc.User | None, **fields) -> None:
+        """Adds an entry to the dashboard's activity log (unless LOG_MESSAGES is off)."""
+        if not LOG_MESSAGES:
+            return
+        self.store.log_event(
+            guild_id=guild.id, kind=kind, channel_name=getattr(channel, "name", None),
+            user_id=member.id if member else None, user_name=str(member) if member else None, **fields,
+        )
+
     # ---- AI chat -----------------------------------------------------------
 
     def wants_reply(self, message: discord.Message, in_chat_channel: bool) -> bool:
@@ -300,6 +313,10 @@ class SpamGuard(discord.Client):
                 return
             where = "chat channel" if in_chat_channel else "mention"
             log.info("Reply (%s) by %s: %r", where, chatter.last_model, text[:100])
+            self.log_event(
+                message.guild, message.channel, "reply", message.author, content=text[:500], model=chatter.last_model,
+                reason=where, detail=f"replying to: {message.clean_content[:300]}",
+            )
             # No pings from the AI, ever (it can't @everyone or mention people).
             await message.reply(text[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException as e:
@@ -312,11 +329,21 @@ class SpamGuard(discord.Client):
         if verdict is None:
             return
         member = message.author
+        details = [f"first check: {verdict.first}"] if verdict.first else []
+        record = dict(
+            content=text[:500], verdict=verdict.verdict, reason=verdict.reason, model=verdict.model,
+            escalated=verdict.escalated, overruled=verdict.overruled,
+        )
         if verdict.ok:
+            if self.strikes.count(member.id):
+                details.append(f"cleared {self.strikes.count(member.id)} strike(s) in a row")
             self.strikes.reset(member.id)  # strikes only add up when they come in a row
+            self.log_event(message.guild, message.channel, "check", member, detail="; ".join(details) or None, **record)
             return
         log.info("Strike for %s (%s, by %s): %s | %r", member, verdict.verdict, verdict.model, verdict.reason, text[:100])
         strikes = self.strikes.add(member.id, f"{verdict.reason}\n“{text[:150]}”", time.monotonic())
+        details.append("strike 3 of 3 in a row: offense" if strikes else f"strike {self.strikes.count(member.id)} of {AI_STRIKES} in a row")
+        self.log_event(message.guild, message.channel, "check", member, detail="; ".join(details), **record)
         if strikes and not self.remaining_penalty(message.guild.id, member.id):
             reasons = [s.split("\n", 1)[0] for s in strikes]
             evidence = "\n".join(s.split("\n", 1)[1] for s in strikes)
@@ -545,6 +572,11 @@ async def settle_cmd(
     ruling = await bot.settler.settle(transcript, speaker(interaction.user), comment, PERSONA)
     if ruling:
         log.info("Settled %r by %s: winner %s", ruling.topic[:60], bot.settler.last_model, ruling.winner)
+        bot.log_event(
+            interaction.guild, interaction.channel, "ruling", interaction.user, content=ruling.verdict[:500],
+            reason=ruling.reasoning[:1000], model=bot.settler.last_model,
+            detail=f"topic: {ruling.topic[:200]} · winner: {ruling.winner[:100]}" + (f" · comment: {comment[:200]}" if comment else ""),
+        )
     if ruling is None:
         await interaction.followup.send("The AI couldn't be reached. Try again in a minute.")
         return

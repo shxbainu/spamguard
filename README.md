@@ -90,17 +90,16 @@ Bots can't put someone back into a server after kicking them; Discord only allow
 
 ## Dashboard
 
-While the bot runs, open **http://localhost:8080** on the same computer. It shows:
+While the bot runs, open the dashboard (on your own computer: **http://localhost:8080**; on a host, see below). It has four tabs:
 
-- Counts for the last 24 hours, timeouts, kicks, and all time
-- Which checks are catching people, and who's been punished most this week
-- Everyone's current offense count and when it resets, with a **Reset** button for each person and **Reset everyone**
-- Every punishment: when, who, timeout length or kick, which offense number, the reason, the messages that caused it, and the channel
-- Search by username or ID, and filter by reason or action. It refreshes every 15 seconds.
+- **Overview**: today's punishments, messages checked, how many were flagged, how often Gemini gave a second opinion and how often it overruled the first check, bot replies, everyone's current offense level with **Reset** buttons, the latest flags with reasons, why people were punished, who was punished most this week, and which AI models did the work.
+- **Message log**: every message the "not contributing" check judged: who said it, where, the verdict, the AI's reason, which model decided, the first model's call when a second opinion was asked, and how many strikes in a row that person is on. Filter by person, flagged only, or second opinions only.
+- **Punishments**: every timeout and kick, the offense number, and the messages behind it (for AI offenses, each flagged message with the AI's reason).
+- **Bot activity**: every chat reply and `/settleargument` ruling, what it was replying to, the ruling's reasoning, and which model answered.
 
-History is saved in `spamguard.db`, so it survives restarts. To look at the dashboard without the bot running, use `python dashboard.py`.
+It refreshes every 15 seconds. Punishment history is kept forever; the message log and bot activity keep the last 7 days (`LOG_DAYS`) and clean themselves up. Set `LOG_MESSAGES=false` to stop logging message text.
 
-The dashboard is only reachable from the computer the bot runs on. To open it to other devices, set `DASHBOARD_HOST=0.0.0.0` **and** a `DASHBOARD_PASSWORD` (the username is `admin`).
+The dashboard is only reachable from the computer the bot runs on. To open it to other devices, set `DASHBOARD_HOST=0.0.0.0` **and** a `DASHBOARD_PASSWORD` (the username is `admin`). On a host like Wispbyte, also set `DASHBOARD_PORT` to the port in your server's address and open `http://ADDRESS:PORT`.
 
 ## Setup
 

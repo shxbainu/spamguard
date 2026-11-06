@@ -84,7 +84,7 @@ class SpeakerTests(unittest.TestCase):
 
 
 class InARowTests(unittest.TestCase):
-    def run_messages(self, verdicts):
+    def run_messages(self, verdicts, logged=None):
         punished = []
         answers = iter(verdicts)
 
@@ -97,8 +97,11 @@ class InARowTests(unittest.TestCase):
         bot = SimpleNamespace(
             judge=SimpleNamespace(judge=judge), strikes=StrikeTracker(3, 600),
             remaining_penalty=lambda guild_id, user_id: 0, punish=punish,
+            log_event=lambda guild, channel, kind, member, **fields: (logged if logged is not None else []).append(fields),
         )
-        message = SimpleNamespace(author=SimpleNamespace(id=5, display_name="ben", name="ben"), guild=SimpleNamespace(id=1))
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=5, display_name="ben", name="ben"), guild=SimpleNamespace(id=1), channel=None,
+        )
         for _ in verdicts:
             asyncio.run(SpamGuard.check_contribution(bot, message, [], "msg"))
         return punished
@@ -107,6 +110,14 @@ class InARowTests(unittest.TestCase):
         flag, ok = Verdict("low_effort", "random"), Verdict("ok", "fine")
         self.assertEqual(self.run_messages([flag, flag, ok, flag, flag]), [], "never 3 in a row")
         self.assertEqual(len(self.run_messages([flag, flag, flag])), 1, "3 in a row is an offense")
+
+    def test_each_check_is_logged_with_its_strike_count(self):
+        flag, ok = Verdict("low_effort", "random"), Verdict("ok", "fine")
+        logged = []
+        self.run_messages([flag, flag, ok], logged)
+        self.assertEqual([entry["detail"] for entry in logged],
+                         ["strike 1 of 3 in a row", "strike 2 of 3 in a row", "cleared 2 strike(s) in a row"])
+        self.assertEqual(logged[0]["verdict"], "low_effort")
 
 
 if __name__ == "__main__":

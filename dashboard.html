@@ -6,147 +6,404 @@
 <title>Ben's Butt Spreader</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2129; --muted: #667085; --line: #e4e7ec;
-    --accent: #5865f2; --timeout: #b54708; --timeout-bg: #fef0c7; --kick: #b42318; --kick-bg: #fee4e2;
-    --failed: #475467; --failed-bg: #eaecf0; --chip: #eef0ff;
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b1f27; --muted: #667085; --faint: #98a2b3; --line: #e4e7ec;
+    --accent: #5865f2; --accent-bg: #eef0ff;
+    --ok: #067647; --ok-bg: #dcfae6; --warn: #b54708; --warn-bg: #fef0c7; --bad: #b42318; --bad-bg: #fee4e2;
+    --info: #175cd3; --info-bg: #d1e9ff; --flip: #6941c6; --flip-bg: #ebe9fe; --neutral-bg: #eaecf0;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #111318; --panel: #1a1d24; --text: #e6e8ee; --muted: #98a2b3; --line: #2a2f3a;
-      --accent: #8b94ff; --timeout: #fdb022; --timeout-bg: #3a2a0c; --kick: #f97066; --kick-bg: #3d1716;
-      --failed: #98a2b3; --failed-bg: #2a2f3a; --chip: #262a45;
+      --bg: #0f1116; --panel: #181b22; --text: #e6e8ee; --muted: #98a2b3; --faint: #667085; --line: #272c36;
+      --accent: #8b94ff; --accent-bg: #23274a;
+      --ok: #47cd89; --ok-bg: #0f2e1e; --warn: #fdb022; --warn-bg: #3a2a0c; --bad: #f97066; --bad-bg: #3d1716;
+      --info: #84caff; --info-bg: #102a4c; --flip: #bdb4fe; --flip-bg: #2a2150; --neutral-bg: #272c36;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-  h1 { margin: 0; font-size: 22px; }
-  h2 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; }
-  .updated { color: var(--muted); font-size: 13px; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
-  .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  h1 { margin: 0; font-size: 21px; }
+  h2 { margin: 0; font-size: 14px; font-weight: 650; }
+  .updated { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .dot.down { background: var(--bad); }
+
+  nav { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; overflow-x: auto; }
+  nav a { padding: 9px 14px; color: var(--muted); text-decoration: none; font-weight: 600; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  nav a .count { font-size: 12px; color: var(--faint); margin-left: 4px; }
+  section.tab { display: none; }
+  section.tab.active { display: block; }
+
+  .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 1100px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+  .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .card { padding: 13px 15px; }
   .card .label { color: var(--muted); font-size: 13px; }
-  .card .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
-  .bars div { display: grid; grid-template-columns: 120px 1fr 40px; align-items: center; gap: 8px; margin: 6px 0; }
+  .card .value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .card .sub { color: var(--faint); font-size: 12px; }
+  .panel { padding: 14px 16px; margin-bottom: 14px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .panel-head p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid2 > .panel { margin-bottom: 0; }
+  .grid2 + .grid2, .grid2 + .panel { margin-top: 14px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .bars div { display: grid; grid-template-columns: minmax(80px, 140px) 1fr 36px; align-items: center; gap: 8px; margin: 7px 0; }
+  .bars span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bar { height: 8px; border-radius: 4px; background: var(--accent); min-width: 2px; }
   .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
   .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  input, select { padding: 7px 10px; }
   input { flex: 1; min-width: 180px; }
+  button { font-size: 13px; padding: 5px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
   tr:last-child td { border-bottom: 0; }
+  td.when { white-space: nowrap; color: var(--muted); }
+  td.msg { max-width: 360px; word-break: break-word; }
+  .quote { border-left: 3px solid var(--line); padding-left: 8px; margin: 3px 0; word-break: break-word; }
+  .label-line { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .timeout { color: var(--timeout); background: var(--timeout-bg); }
-  .kick { color: var(--kick); background: var(--kick-bg); }
-  .failed { color: var(--failed); background: var(--failed-bg); }
-  .chip { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--ok-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .info { color: var(--info); background: var(--info-bg); }
+  .flip { color: var(--flip); background: var(--flip-bg); }
+  .neutral { color: var(--muted); background: var(--neutral-bg); }
+  .chip { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--accent-bg); color: var(--accent); font-size: 12px; white-space: nowrap; }
   .muted { color: var(--muted); font-size: 12px; }
-  .evidence { margin-top: 4px; color: var(--muted); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-  .empty { padding: 32px; text-align: center; color: var(--muted); }
-  .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .panel-head h2 { margin: 0; }
-  .offenders { margin-bottom: 16px; }
-  .offender { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .offender:last-child { border-bottom: 0; }
+  .why { margin-top: 3px; }
+  .trail { margin-top: 4px; font-size: 12px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12px; margin-top: 4px; }
+  details p { margin: 6px 0 0; font-size: 13px; }
+  .empty { padding: 28px; text-align: center; color: var(--muted); }
+
+  .list-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .list-row:last-child { border-bottom: 0; }
   .level { font-weight: 650; font-variant-numeric: tabular-nums; }
-  button { font: inherit; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
-  button:hover { border-color: var(--accent); color: var(--accent); }
+  .flag-row { padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .flag-row:last-child { border-bottom: 0; }
+  .flag-row .top { display: flex; justify-content: space-between; gap: 8px; }
+  footer { color: var(--faint); font-size: 12px; margin-top: 18px; text-align: center; }
 </style>
 </head>
 <body>
 <main>
   <header>
     <h1>Ben's Butt Spreader</h1>
-    <span class="updated" id="updated">Loading…</span>
+    <span class="updated"><span class="dot" id="dot"></span><span id="updated">Loading…</span></span>
   </header>
 
-  <section class="cards">
-    <div class="card"><div class="label">Last 24 hours</div><div class="value" id="last24">–</div></div>
-    <div class="card"><div class="label">Timeouts</div><div class="value" id="timeouts">–</div></div>
-    <div class="card"><div class="label">Kicks</div><div class="value" id="kicks">–</div></div>
-    <div class="card"><div class="label">All time</div><div class="value" id="total">–</div></div>
-  </section>
+  <nav>
+    <a href="#overview" data-tab="overview">Overview</a>
+    <a href="#log" data-tab="log">Message log<span class="count" id="logCount"></span></a>
+    <a href="#punishments" data-tab="punishments">Punishments<span class="count" id="punCount"></span></a>
+    <a href="#bot" data-tab="bot">Bot activity<span class="count" id="botCount"></span></a>
+  </nav>
 
-  <section class="row">
-    <div class="panel"><h2>Why people were punished</h2><div class="bars" id="categories"></div></div>
-    <div class="panel"><h2>Most punished, last 7 days</h2><div class="bars" id="topUsers"></div></div>
-  </section>
-
-  <section class="panel offenders">
-    <div class="panel-head">
-      <h2>Current offense levels</h2>
-      <button id="resetAll">Reset everyone</button>
+  <!-- Overview -->
+  <section class="tab" id="tab-overview">
+    <div class="cards">
+      <div class="card"><div class="label">Punished today</div><div class="value" id="c-punished">–</div><div class="sub" id="c-punished-sub"></div></div>
+      <div class="card"><div class="label">Messages checked today</div><div class="value" id="c-checked">–</div><div class="sub">by the AI</div></div>
+      <div class="card"><div class="label">Flagged as noise</div><div class="value" id="c-flagged">–</div><div class="sub" id="c-flagged-sub"></div></div>
+      <div class="card"><div class="label">Second opinions</div><div class="value" id="c-second">–</div><div class="sub" id="c-second-sub"></div></div>
+      <div class="card"><div class="label">Bot replies today</div><div class="value" id="c-replies">–</div><div class="sub" id="c-replies-sub"></div></div>
+      <div class="card"><div class="label">People with offenses</div><div class="value" id="c-offenders">–</div><div class="sub">right now</div></div>
     </div>
-    <div id="offenders"></div>
-  </section>
 
-  <section class="panel">
-    <div class="filters">
-      <input id="user" type="search" placeholder="Search by username or user ID">
-      <select id="category">
-        <option value="">All reasons</option>
-        <option value="gif">GIF spam</option>
-        <option value="repeat">Repeating</option>
-        <option value="ai">Not contributing (AI)</option>
-        <option value="shutup">/shutup</option>
-      </select>
-      <select id="action">
-        <option value="">All actions</option>
-        <option value="timeout">Timeouts</option>
-        <option value="kick">Kicks</option>
-        <option value="failed">Failed</option>
-      </select>
+    <div class="grid2">
+      <div class="panel">
+        <div class="panel-head"><div><h2>Current offense levels</h2><p>Each offense moves someone up the punishment ladder.</p></div><button id="resetAll">Reset everyone</button></div>
+        <div id="offenders"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>Latest flags</h2><p>Messages the AI called noise, and why. Three in a row is an offense.</p></div><a href="#log" class="muted">See all →</a></div>
+        <div id="latestFlags"></div>
+      </div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>When</th><th>Member</th><th>Punishment</th><th>Offense</th><th>Reason</th><th>Channel</th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
+
+    <div class="grid2">
+      <div class="panel"><div class="panel-head"><h2>Why people were punished</h2><span class="muted">all time</span></div><div class="bars" id="categories"></div></div>
+      <div class="panel"><div class="panel-head"><h2>Most punished</h2><span class="muted">last 7 days</span></div><div class="bars" id="topUsers"></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>AI models used</h2><span class="muted">last 24 hours, checks + replies + rulings</span></div>
+      <div class="bars" id="models"></div>
     </div>
   </section>
+
+  <!-- Message log -->
+  <section class="tab" id="tab-log">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Messages the AI checked</h2><p>Every message the "not contributing" check judged, the verdict, its reasoning, and which model made the call.</p></div></div>
+      <div class="filters">
+        <input id="logUser" type="search" placeholder="Search by username or user ID">
+        <select id="logFilter">
+          <option value="">All checked messages</option>
+          <option value="flagged">Flagged only</option>
+          <option value="escalated">Second opinions only</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Member</th><th>Message</th><th>Verdict</th><th>Why</th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Punishments -->
+  <section class="tab" id="tab-punishments">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Punishments</h2><p>Every timeout and kick, the offense number, and the messages that caused it.</p></div></div>
+      <div class="filters">
+        <input id="punUser" type="search" placeholder="Search by username or user ID">
+        <select id="punCategory">
+          <option value="">All reasons</option>
+          <option value="gif">GIF spam</option>
+          <option value="repeat">Repeating</option>
+          <option value="ai">Not contributing (AI)</option>
+          <option value="shutup">/shutup</option>
+        </select>
+        <select id="punAction">
+          <option value="">All actions</option>
+          <option value="timeout">Timeouts</option>
+          <option value="kick">Kicks</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Member</th><th>Punishment</th><th>Offense</th><th>Why</th><th>Channel</th></tr></thead>
+          <tbody id="punRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bot activity -->
+  <section class="tab" id="tab-bot">
+    <div class="panel">
+      <div class="panel-head"><div><h2>What the bot said</h2><p>Chat replies and /settleargument rulings, what prompted them, and which model answered.</p></div></div>
+      <div class="filters">
+        <input id="botUser" type="search" placeholder="Search by who it was talking to">
+        <select id="botKind">
+          <option value="">Replies and rulings</option>
+          <option value="reply">Chat replies</option>
+          <option value="ruling">Rulings</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When</th><th>Type</th><th>To</th><th>Bot said</th><th>Context</th><th>Model</th></tr></thead>
+          <tbody id="botRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer id="footer"></footer>
 </main>
 
 <script>
 const CATEGORY = { gif: "GIF spam", repeat: "Repeating", ai: "Not contributing", shutup: "/shutup" };
+const VERDICT = { ok: ["Fine", "ok"], low_effort: ["Low effort", "warn"], disruptive: ["Disruptive", "bad"] };
 const $ = (id) => document.getElementById(id);
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-
 function duration(seconds) {
   for (const [unit, size] of [["d", 86400], ["h", 3600], ["m", 60]]) {
     if (seconds >= size && seconds % size === 0) return `${seconds / size}${unit}`;
   }
   return `${seconds}s`;
 }
-
-function ago(timestamp) {
-  const s = Math.max(0, Date.now() / 1000 - timestamp);
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 - t);
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
-
-function bars(el, items) {
-  const max = Math.max(1, ...items.map((i) => i.count));
-  el.innerHTML = items.length
-    ? items.map((i) => `<div><span>${esc(i.label)}</span><span class="bar" style="width:${(i.count / max) * 100}%"></span><span class="num">${i.count}</span></div>`).join("")
-    : `<p class="muted">Nothing yet.</p>`;
-}
-
-function until(timestamp) {
-  const s = Math.max(0, timestamp - Date.now() / 1000);
+function until(t) {
+  const s = Math.max(0, t - Date.now() / 1000);
   if (s < 3600) return `${Math.ceil(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+const when = (t) => `<td class="when" title="${esc(new Date(t * 1000).toLocaleString())}">${ago(t)}</td>`;
+const member = (name, id) => `<td>${esc(name || id || "–")}${id ? `<div class="muted">${esc(id)}</div>` : ""}</td>`;
+const empty = (cols, text) => `<tr><td colspan="${cols}" class="empty">${text}</td></tr>`;
+const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+
+function bars(el, items, emptyText = "Nothing yet.") {
+  const max = Math.max(1, ...items.map((i) => i.count));
+  el.innerHTML = items.length
+    ? items.map((i) => `<div><span title="${esc(i.label)}">${esc(i.label)}</span><span class="bar" style="width:${(i.count / max) * 100}%"></span><span class="num">${i.count}</span></div>`).join("")
+    : `<p class="muted">${emptyText}</p>`;
+}
+function verdictBadge(v) {
+  const [label, cls] = VERDICT[v] || [v || "–", "neutral"];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+function checkWhy(e) {
+  const tags = [];
+  if (e.escalated) tags.push(`<span class="badge info">second opinion</span>`);
+  if (e.overruled) tags.push(`<span class="badge flip">overruled first check</span>`);
+  const trail = (e.detail || "").split("; ").filter(Boolean).map(esc).join("<br>");
+  return `${esc(e.reason)}
+    <div class="trail">decided by ${esc(e.model || "?")} ${tags.join(" ")}${trail ? `<br>${trail}` : ""}</div>`;
+}
+function punishmentBadge(p) {
+  if (p.action === "kick") return `<span class="badge bad">Kick</span><div class="muted">rejoin after ${duration(p.duration_seconds)}</div>`;
+  if (p.action === "failed") return `<span class="badge neutral">Failed</span><div class="muted">no permission</div>`;
+  return `<span class="badge warn">Timeout ${duration(p.duration_seconds)}</span>`;
+}
+// AI evidence alternates the AI's reason with the quoted message ("“...”"); other evidence is just the message.
+function evidence(text) {
+  if (!text) return "";
+  return text.split("\n").filter(Boolean).map((line) => /^[“"]/.test(line)
+    ? `<div class="quote">${esc(line.replace(/^[“"]|[”"]$/g, ""))}</div>`
+    : (text.includes("“") ? `<div class="label-line">${esc(line)}</div>` : `<div class="quote">${esc(line)}</div>`)).join("");
+}
+async function getJSON(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(resp.status);
+  return resp.json();
+}
+
+// ---- tabs ----
+function currentTab() {
+  const tab = location.hash.slice(1);
+  return ["overview", "log", "punishments", "bot"].includes(tab) ? tab : "overview";
+}
+function showTab() {
+  const tab = currentTab();
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === tab));
+  document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("active", s.id === `tab-${tab}`));
+  load();
+}
+window.addEventListener("hashchange", showTab);
+
+// ---- loaders ----
+async function loadOverview(stats, offenders) {
+  const a = stats.activity;
+  $("c-punished").textContent = stats.last_24h;
+  $("c-punished-sub").textContent = `${stats.timeouts} timeouts · ${stats.kicks} kicks all time`;
+  $("c-checked").textContent = a.checked;
+  $("c-flagged").textContent = a.flagged;
+  $("c-flagged-sub").textContent = `${pct(a.flagged, a.checked)}% of checked messages`;
+  $("c-second").textContent = a.second_opinions;
+  $("c-second-sub").textContent = `${a.overruled} overruled the first check`;
+  $("c-replies").textContent = a.replies;
+  $("c-replies-sub").textContent = `+ ${a.rulings} ruling${a.rulings === 1 ? "" : "s"}`;
+  $("c-offenders").textContent = offenders.length;
+
+  $("offenders").innerHTML = offenders.length ? offenders.map((o) => `
+    <div class="list-row">
+      <div>${esc(o.user_name || o.user_id)}<div class="muted">${esc(o.user_id)}</div></div>
+      <div><span class="level">${o.offenses} offense${o.offenses === 1 ? "" : "s"}</span><div class="muted">resets in ${until(o.resets_at)}</div></div>
+      <button data-guild="${esc(o.guild_id)}" data-user="${esc(o.user_id)}" data-name="${esc(o.user_name || o.user_id)}">Reset</button>
+    </div>`).join("") : `<p class="muted">Nobody has any offenses right now.</p>`;
+
+  const flags = await getJSON("api/events?kind=check&flagged=1&limit=6");
+  $("latestFlags").innerHTML = flags.length ? flags.map((e) => `
+    <div class="flag-row">
+      <div class="top"><strong>${esc(e.user_name)}</strong><span class="muted">${ago(e.created_at)}${e.channel_name ? ` · #${esc(e.channel_name)}` : ""}</span></div>
+      <div class="quote">${esc(e.content)}</div>
+      <div class="muted">${verdictBadge(e.verdict)} ${esc(e.reason)} · ${esc(e.model)}${e.detail ? ` · ${esc(e.detail.split("; ").pop())}` : ""}</div>
+    </div>`).join("") : `<p class="muted">No flags in the last ${a.kept_days} days.</p>`;
+
+  bars($("categories"), Object.entries(stats.by_category).map(([k, count]) => ({ label: CATEGORY[k] || k, count })));
+  bars($("topUsers"), stats.top_users_7d.map((u) => ({ label: u.user_name, count: u.count })));
+  bars($("models"), a.by_model.map((m) => ({ label: m.model, count: m.count })), "No AI calls in the last 24 hours.");
+}
+
+async function loadLog() {
+  const filter = $("logFilter").value;
+  const params = new URLSearchParams({ kind: "check", user: $("logUser").value.trim(), limit: 300 });
+  if (filter) params.set(filter, "1");
+  const rows = await getJSON(`api/events?${params}`);
+  $("logRows").innerHTML = rows.length ? rows.map((e) => `
+    <tr>
+      ${when(e.created_at)}
+      ${member(e.user_name, e.user_id)}
+      <td class="msg">${esc(e.content)}${e.channel_name ? `<div class="muted">#${esc(e.channel_name)}</div>` : ""}</td>
+      <td>${verdictBadge(e.verdict)}</td>
+      <td>${checkWhy(e)}</td>
+    </tr>`).join("") : empty(5, "No checked messages match.");
+}
+
+async function loadPunishments() {
+  const params = new URLSearchParams({ user: $("punUser").value.trim(), category: $("punCategory").value, action: $("punAction").value });
+  const rows = await getJSON(`api/punishments?${params}`);
+  $("punRows").innerHTML = rows.length ? rows.map((p) => `
+    <tr>
+      ${when(p.created_at)}
+      ${member(p.user_name, p.user_id)}
+      <td>${punishmentBadge(p)}</td>
+      <td>${p.offense ? `#${p.offense}` : "–"}</td>
+      <td class="msg"><span class="chip">${esc(CATEGORY[p.category] || p.category)}</span> ${esc(p.reason)}${evidence(p.evidence)}</td>
+      <td>${p.channel_name ? "#" + esc(p.channel_name) : ""}</td>
+    </tr>`).join("") : empty(6, "No punishments match.");
+}
+
+async function loadBot() {
+  const kind = $("botKind").value;
+  const params = new URLSearchParams({ user: $("botUser").value.trim(), limit: 300 });
+  if (kind) params.set("kind", kind);
+  const rows = (await getJSON(`api/events?${params}`)).filter((e) => e.kind !== "check");
+  $("botRows").innerHTML = rows.length ? rows.map((e) => {
+    const ruling = e.kind === "ruling";
+    const context = ruling
+      ? `${esc(e.detail)}<details><summary>Reasoning</summary><p>${esc(e.reason)}</p></details>`
+      : `<div class="quote">${esc((e.detail || "").replace(/^replying to: /, ""))}</div><div class="muted">${esc(e.reason)}</div>`;
+    return `
+    <tr>
+      ${when(e.created_at)}
+      <td><span class="badge ${ruling ? "flip" : "info"}">${ruling ? "Ruling" : "Reply"}</span></td>
+      ${member(e.user_name, e.user_id)}
+      <td class="msg">${esc(e.content)}${e.channel_name ? `<div class="muted">#${esc(e.channel_name)}</div>` : ""}</td>
+      <td class="msg">${context}</td>
+      <td class="muted">${esc(e.model)}</td>
+    </tr>`;
+  }).join("") : empty(6, "The bot hasn't said anything yet.");
+}
+
+async function load() {
+  try {
+    const [stats, offenders] = await Promise.all([getJSON("api/stats"), getJSON("api/offenders")]);
+    const a = stats.activity;
+    $("logCount").textContent = a.checked ? a.checked : "";
+    $("punCount").textContent = stats.total ? stats.total : "";
+    $("botCount").textContent = a.replies + a.rulings ? a.replies + a.rulings : "";
+    $("footer").textContent = `The message log and bot activity keep the last ${a.kept_days} days. Punishment history is kept forever.`;
+    const tab = currentTab();
+    if (tab === "overview") await loadOverview(stats, offenders);
+    if (tab === "log") await loadLog();
+    if (tab === "punishments") await loadPunishments();
+    if (tab === "bot") await loadBot();
+    $("dot").classList.remove("down");
+    $("updated").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 15s`;
+  } catch (err) {
+    $("dot").classList.add("down");
+    $("updated").textContent = "Can't reach the bot. Is it running?";
+  }
 }
 
 async function reset(body, question) {
@@ -155,50 +412,6 @@ async function reset(body, question) {
   if (!resp.ok) alert("Reset failed. Is the bot running?");
   load();
 }
-
-function punishmentBadge(p) {
-  if (p.action === "kick") return `<span class="badge kick">Kick</span><div class="muted">rejoin after ${duration(p.duration_seconds)}</div>`;
-  if (p.action === "failed") return `<span class="badge failed">Failed</span><div class="muted">no permission</div>`;
-  return `<span class="badge timeout">Timeout ${duration(p.duration_seconds)}</span>`;
-}
-
-async function load() {
-  const params = new URLSearchParams({ user: $("user").value.trim(), category: $("category").value, action: $("action").value });
-  try {
-    const [stats, rows, offenders] = await Promise.all([
-      fetch("api/stats").then((r) => r.json()),
-      fetch(`api/punishments?${params}`).then((r) => r.json()),
-      fetch("api/offenders").then((r) => r.json()),
-    ]);
-    $("offenders").innerHTML = offenders.length ? offenders.map((o) => `
-      <div class="offender">
-        <div>${esc(o.user_name || o.user_id)}<div class="muted">${esc(o.user_id)}</div></div>
-        <div><span class="level">${o.offenses} offense${o.offenses === 1 ? "" : "s"}</span><div class="muted">resets in ${until(o.resets_at)}</div></div>
-        <button data-guild="${esc(o.guild_id)}" data-user="${esc(o.user_id)}" data-name="${esc(o.user_name || o.user_id)}">Reset</button>
-      </div>`).join("") : `<p class="muted">Nobody has any offenses right now.</p>`;
-    $("last24").textContent = stats.last_24h;
-    $("timeouts").textContent = stats.timeouts;
-    $("kicks").textContent = stats.kicks;
-    $("total").textContent = stats.total;
-    bars($("categories"), Object.entries(stats.by_category).map(([k, count]) => ({ label: CATEGORY[k], count })));
-    bars($("topUsers"), stats.top_users_7d.map((u) => ({ label: u.user_name, count: u.count })));
-
-    $("rows").innerHTML = rows.length ? rows.map((p) => `
-      <tr>
-        <td title="${esc(new Date(p.created_at * 1000).toLocaleString())}">${ago(p.created_at)}</td>
-        <td>${esc(p.user_name)}<div class="muted">${esc(p.user_id)}</div></td>
-        <td>${punishmentBadge(p)}</td>
-        <td>${p.offense ? `#${p.offense}` : "–"}</td>
-        <td><span class="chip">${esc(CATEGORY[p.category] || p.category)}</span> ${esc(p.reason)}
-          ${p.evidence ? `<div class="evidence">${esc(p.evidence)}</div>` : ""}</td>
-        <td>${p.channel_name ? "#" + esc(p.channel_name) : ""}</td>
-      </tr>`).join("") : `<tr><td colspan="6" class="empty">No punishments match.</td></tr>`;
-    $("updated").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 15s`;
-  } catch (err) {
-    $("updated").textContent = "Can't reach the bot. Is it running?";
-  }
-}
-
 // IDs stay strings: they're too big for JavaScript numbers.
 $("offenders").addEventListener("click", (e) => {
   const b = e.target.closest("button");
@@ -207,10 +420,12 @@ $("offenders").addEventListener("click", (e) => {
 $("resetAll").addEventListener("click", () => reset({ all: true }, "Reset everyone's offenses to zero?"));
 
 let typing;
-$("user").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(load, 250); });
-$("category").addEventListener("change", load);
-$("action").addEventListener("change", load);
-load();
+for (const id of ["logUser", "punUser", "botUser"]) {
+  $(id).addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(load, 250); });
+}
+for (const id of ["logFilter", "punCategory", "punAction", "botKind"]) $(id).addEventListener("change", load);
+
+showTab();
 setInterval(load, 15000);
 </script>
 </body>

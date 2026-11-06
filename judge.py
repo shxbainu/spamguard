@@ -216,6 +216,9 @@ class Verdict:
     reason: str
     confident: bool = True
     model: str = ""  # which model gave it, for the log
+    escalated: bool = False  # a second model was asked
+    overruled: bool = False  # ...and it disagreed with the first
+    first: str = ""  # the first model's call when a second was asked, e.g. "gpt-oss-20b: low_effort (gibberish)"
 
     @property
     def ok(self) -> bool:
@@ -623,7 +626,10 @@ class SecondOpinion:
         second = await self.second.judge(author, context, message, persona)
         if second is None:
             return verdict if verdict.ok else None
-        if verdict.ok != second.ok:
+        second.escalated = True
+        second.overruled = verdict.ok != second.ok
+        second.first = f"{verdict.model}: {verdict.verdict} ({verdict.reason})"
+        if second.overruled:
             log.info("%s disagreed: %s (%s)", second.model, second.verdict, second.reason)
         return second
 
