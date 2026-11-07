@@ -165,7 +165,18 @@ class JudgeTests(unittest.TestCase):
         self.assertIn("tell dave he's wrong", prompt)
         self.assertIn("a pirate", messages.last_kwargs["system"])
         self.assertIn("Always pick a winner", messages.last_kwargs["system"])
+        self.assertIn("impartial judge", messages.last_kwargs["system"])
         self.assertEqual(result.reply, "arr amy wins this one", "reply tidied like chat")
+
+    def test_ruling_is_neutral_but_reply_keeps_the_voice(self):
+        ruling = {"topic": "Gaming all day vs hobbies \U0001F62D", "sides": [], "winner": "shxbainu",
+                  "verdict": "Shxbainu wins because balance matters \U0001F62D\u270C\ufe0f", "reasoning": "Balance wins.",
+                  "facts": ["Sleep matters \U0001F480"], "reply": "Gotchu, twin \u270C\ufe0f"}
+        judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(json.dumps(ruling)))
+        result = asyncio.run(judge.settle([("a", "x")], "shxbainu", persona="uses emojis like \u270C\ufe0f"))
+        self.assertEqual((result.topic, result.verdict, result.facts),
+                         ("Gaming all day vs hobbies", "Shxbainu wins because balance matters", ["Sleep matters"]))
+        self.assertEqual(result.reply, "gotchu twin \u270C\ufe0f")
 
     def test_gemini_settle_with_bad_answer_gives_none(self):
         judge = GeminiJudge("gemini-3.5-flash-lite", client=FakeGemini(json.dumps({"verdict": "ok"})))

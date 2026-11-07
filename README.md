@@ -171,7 +171,7 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/shutup @user` | Times them out for 10 seconds. Each member gets **3 per week** (rolling 7 days, counted per member). Can't target yourself, bots, admins, or anyone already timed out, and a failed attempt doesn't use one up. It doesn't add to anyone's offense count, but it shows on the dashboard. |
 | `/settleargument [comment] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. Leave a `comment` ("tell Dave he's wrong") and it answers you directly, in its current personality. Once per channel every 30 seconds. |
 
-`/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. Its personality changes the wording, not who wins. Tune the commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
+`/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. The ruling itself (topic, verdict, reasoning, facts) is written as a neutral referee: no jokes, emojis or bias toward anyone the personality likes or dislikes, and the facts are real-world evidence, not a recap of the chat. Only the one-line reply above it is in the bot's personality. Tune the commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
 
 ### For mods
 
