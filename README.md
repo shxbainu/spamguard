@@ -75,14 +75,13 @@ The chat history is sent to the AI as a real back-and-forth conversation (its ow
 
 ### Profile status
 
-Discord shows a bot only one activity at a time, so the bot keeps **Watching over the server for ShxbaInu** up the whole time (`MAIN_ACTIVITY`) and rotates the smaller line under it every `STATUS_MINUTES` (10) through `STATUSES`:
+The bot shows a custom status on its profile, switching every `STATUS_MINUTES` (10 by default). Set your own with `STATUSES` in `.env`, separated by `|`:
 
 ```
-MAIN_ACTIVITY="watching: over the server for ShxbaInu"
-STATUSES="serving ShxbaInu|destroying ben's cheeks|running from dictator kim john-un|forcing luke to touch grass"
+STATUSES="watching over the server for ShxbaInu|serving ShxbaInu|destroying ben's cheeks|forcing luke to touch grass"
 ```
 
-`MAIN_ACTIVITY` can start with `watching:`, `playing:`, `listening:`, `competing:` or `streaming:` (shown as the purple "Streaming"; Discord needs a Twitch or YouTube link for that, set with `STREAM_URL`). A status bought in the shop takes over the smaller line for an hour. Set `MAIN_ACTIVITY=` (empty) to have the statuses take turns on their own as plain custom statuses instead. The bot always spells the nickname Kim John-Un (never Jong-Un), in chat, rulings and statuses.
+A status bought in the shop replaces the rotation for an hour. The bot always spells the nickname Kim John-Un (never Jong-Un), in chat, rulings and statuses.
 
 ## Punishment ladder
 
