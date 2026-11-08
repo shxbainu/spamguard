@@ -142,7 +142,7 @@ async def buy_cmd(
         status = clean_text(text, 60)
         store.set_state("status_override", json.dumps({"text": status, "until": time.time() + STATUS_SECONDS, "by": str(member)}))
         try:
-            await bot.change_presence(activity=discord.CustomActivity(name=status))
+            await bot.show_status(status)
         except discord.HTTPException:
             pass
         await interaction.response.send_message(f"{member.display_name} set my status to **{status}** for an hour.")

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import discord
 
-from bot import CHAT_COOLDOWN_SECONDS, STATUSES, SpamGuard, make_status, shutup_blocker, speaker
+from bot import CHAT_COOLDOWN_SECONDS, STATUSES, SpamGuard, current_status, make_status, shutup_blocker, speaker
 from detectors import PerMinuteBudget, StrikeTracker
 from judge import Verdict
 
@@ -124,16 +124,28 @@ class InARowTests(unittest.TestCase):
 
 class StatusTests(unittest.TestCase):
     def test_activity_types_and_custom_statuses(self):
-        watching = make_status("watching: over the server for ShxbaInu")
+        watching = make_status("watching: over the server for ShxbaInu", "destroying ben's cheeks")
         self.assertEqual((watching.type, watching.name), (discord.ActivityType.watching, "over the server for ShxbaInu"))
+        self.assertEqual(watching.state, "destroying ben's cheeks")
+        streaming = make_status("streaming: ben getting cooked")
+        self.assertIsInstance(streaming, discord.Streaming)
+        self.assertTrue(streaming.url.startswith("https://www.twitch.tv/"))
         custom = make_status("running from dictator kim jong-un")
         self.assertIsInstance(custom, discord.CustomActivity)
         self.assertEqual(custom.name, "running from dictator kim john-un")
         self.assertIsInstance(make_status("note: not a type"), discord.CustomActivity)
 
+    def test_watching_stays_up_and_statuses_rotate_under_it(self):
+        first, second = current_status(0), current_status(1)
+        self.assertEqual(first.type, discord.ActivityType.watching)
+        self.assertEqual(first.name, "over the server for ShxbaInu")
+        self.assertEqual(second.name, first.name)
+        self.assertNotEqual(first.state, second.state)
+        self.assertIn(first.state, STATUSES)
+        self.assertEqual(current_status(3, bought="ben owes me 500 aura").state, "ben owes me 500 aura")
+
     def test_default_statuses(self):
         self.assertIn("forcing luke to touch grass", STATUSES)
-        self.assertIn("watching: over the server for ShxbaInu", STATUSES)
 
 
 class NicknameTests(unittest.TestCase):

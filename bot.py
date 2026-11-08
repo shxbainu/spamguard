@@ -101,15 +101,20 @@ SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
 SHUTUP_WINDOW = 7 * 86400
 SETTLE_COOLDOWN_SECONDS = env_int("SETTLE_COOLDOWN_SECONDS", 30)
 
-# What the bot shows on its profile, one at a time, changing every STATUS_MINUTES. Separate them with |. Start one
-# with "watching:", "playing:", "listening:" or "competing:" for that kind of activity ("Watching over the server
-# for ShxbaInu"); anything else is a custom status, shown as plain text.
+# The bot's profile. Discord shows a bot only one activity, so MAIN_ACTIVITY stays up the whole time (the big
+# "Watching over the server for ShxbaInu" card) and STATUSES take turns as the smaller line under it, changing every
+# STATUS_MINUTES. Start MAIN_ACTIVITY with "watching:", "playing:", "listening:", "competing:" or "streaming:".
+# With MAIN_ACTIVITY empty, STATUSES take turns on their own instead (each can start with one of those words too;
+# anything else is a plain custom status). Separate STATUSES with |.
+MAIN_ACTIVITY = os.getenv("MAIN_ACTIVITY", "watching: over the server for ShxbaInu").strip()
 DEFAULT_STATUSES = (
-    "watching: over the server for ShxbaInu|serving ShxbaInu|destroying ben's cheeks|"
-    "running from dictator kim john-un|forcing luke to touch grass|watching: ben get timed out"
+    "serving ShxbaInu|destroying ben's cheeks|running from dictator kim john-un|forcing luke to touch grass|"
+    "watching ben get timed out"
 )
 STATUSES = [entry.strip() for entry in (os.getenv("STATUSES", "").strip() or DEFAULT_STATUSES).split("|") if entry.strip()]
 STATUS_MINUTES = max(1, env_int("STATUS_MINUTES", 10))
+# "streaming:" needs a Twitch or YouTube link for Discord to show it as Streaming (the purple one).
+STREAM_URL = os.getenv("STREAM_URL", "").strip() or "https://www.twitch.tv/discord"
 
 # Keep a log of checked messages and the bot's replies and rulings for the dashboard, for this many days.
 LOG_MESSAGES = env_bool("LOG_MESSAGES", True)
@@ -175,13 +180,26 @@ ACTIVITY_TYPES = {
 }
 
 
-def make_status(entry: str) -> discord.BaseActivity:
-    """"watching: over the server" is a Watching activity; anything else is a custom status."""
+def make_status(entry: str, line: str | None = None) -> discord.BaseActivity:
+    """"watching: over the server" is a Watching activity (with `line` as the smaller text under it); anything
+    else is a custom status."""
     kind, _, rest = entry.partition(":")
-    kind = kind.strip().lower()
-    if rest.strip() and kind in ACTIVITY_TYPES:
-        return discord.Activity(type=ACTIVITY_TYPES[kind], name=fix_nicknames(rest.strip())[:128])
+    kind, rest = kind.strip().lower(), fix_nicknames(rest.strip())[:128]
+    state = fix_nicknames(line)[:128] if line else None
+    if rest and kind == "streaming":
+        return discord.Streaming(name=rest, url=STREAM_URL, state=state)
+    if rest and kind in ACTIVITY_TYPES:
+        return discord.Activity(type=ACTIVITY_TYPES[kind], name=rest, state=state)
     return discord.CustomActivity(name=fix_nicknames(entry)[:128])
+
+
+def current_status(index: int, bought: str | None = None) -> discord.BaseActivity:
+    """What the bot shows at a given turn of the rotation: MAIN_ACTIVITY with the next status (or a bought one)
+    under it, or just the next status when there's no MAIN_ACTIVITY."""
+    line = bought or (STATUSES[index % len(STATUSES)] if STATUSES else None)
+    if MAIN_ACTIVITY:
+        return make_status(MAIN_ACTIVITY, line)
+    return discord.CustomActivity(name=bought) if bought else make_status(line)
 
 
 def speaker(member: discord.abc.User) -> str:
@@ -286,7 +304,7 @@ class SpamGuard(discord.Client):
             )
         else:
             log.info("Personality: %s", PERSONA if len(PERSONA) <= 100 else PERSONA[:100] + "…")
-        if STATUSES and not self._status_task:  # on_ready runs again after reconnects
+        if (MAIN_ACTIVITY or STATUSES) and not self._status_task:  # on_ready runs again after reconnects
             self._status_task = asyncio.create_task(self.rotate_statuses())
         self.grass.start()
         if not self._shop_task:
@@ -295,14 +313,17 @@ class SpamGuard(discord.Client):
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
         self.grass.on_presence_update(after)
 
+    async def show_status(self, bought: str | None = None) -> None:
+        """Puts a bought status under the main activity right away."""
+        await self.change_presence(activity=current_status(0, bought))
+
     async def rotate_statuses(self) -> None:
-        """Shows each of STATUSES in turn, changing every STATUS_MINUTES."""
+        """Keeps MAIN_ACTIVITY up and shows each of STATUSES in turn under it, changing every STATUS_MINUTES."""
         index = 0
         while True:
             try:
                 bought = shop.status_override(self.store)  # someone paid aura for the bot's status
-                activity = discord.CustomActivity(name=bought) if bought else make_status(STATUSES[index % len(STATUSES)])
-                await self.change_presence(activity=activity)
+                await self.change_presence(activity=current_status(index, bought))
             except Exception:
                 log.exception("Couldn't change the bot's status")
             index += 1
