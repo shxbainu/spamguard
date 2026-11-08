@@ -225,7 +225,7 @@ Right-click a message → **Apps → Fact check** (or `/factcheck claim:"..."`).
 Where the sources come from:
 
 1. **Gemini with Google Search**, if your key has search allowance. Free keys usually don't (it answers "quota exceeded"), so after one refusal the bot stops trying for an hour.
-2. Otherwise **Wikipedia**: the bot looks the claim up (free, no key, costs no AI tokens), gives the AI the top few articles, and lists the ones the AI says it relied on. If nothing relevant turns up, it says the check relies on the AI's own knowledge.
+2. Otherwise **Wikipedia**: the bot looks the claim up (free, no key, no AI tokens), gives the AI the most relevant paragraphs of the top three articles, and the AI backs its answer with up to 3 **exact quotes**. The bot checks every quote word for word against the article it names and drops any that are made up or reworded, so what's shown is really in the article, with a link to it. If nothing relevant turns up, it says the check relies on the AI's own knowledge.
 3. Groq's gpt-oss models can also browse the web (`GROQ_WEB_SEARCH=true`), but one search reads whole pages and uses 30,000–90,000 tokens of the 200,000 free daily allowance, which would starve the chat, so it's off by default.
 
 Debate decisions use the same sources (looking up the motion). `/settleargument` lists sources only when Gemini search works.

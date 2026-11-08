@@ -9,7 +9,7 @@ import time
 import discord
 from discord import app_commands
 
-from debate import source_list
+from debate import sources_field
 
 RATINGS = {
     "true": ("✅ True", 0x2ECC71),
@@ -36,10 +36,11 @@ def fact_embed(check, quoted_by: str | None, model: str) -> discord.Embed:
         embed.add_field(name="Evidence", value=check.explanation[:1024], inline=False)
     if check.correction:
         embed.add_field(name="Correction", value=check.correction[:1024], inline=False)
-    if check.sources:
-        embed.add_field(name="Sources", value=source_list(check.sources), inline=False)
-    else:
-        embed.add_field(name="Sources", value="No matching source was found, so this relies on the AI's general knowledge.", inline=False)
+    shown = sources_field(check.quotes, check.sources)
+    embed.add_field(
+        name="Sources", inline=False,
+        value=shown or "No matching source was found, so this relies on the AI's general knowledge.",
+    )
     embed.set_footer(text=f"Checked by {model} · AI can make mistakes; check the sources")
     return embed
 

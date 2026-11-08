@@ -272,19 +272,35 @@ class FactCheckTests(unittest.TestCase):
     def setUp(self):
         no_wikipedia(self)
 
-    def test_wikipedia_sources_are_the_ones_the_ai_used(self):
-        no_wikipedia(self, ARTICLES)
-        judge = StubJudge(json.dumps(dict(FACT, sources_used=[2, 2, 9, "x"])))
+    def test_only_exact_quotes_from_wikipedia_are_kept(self):
+        articles = [
+            {"title": "Great Wall of China", "url": "https://en.wikipedia.org/wiki/Great_Wall_of_China",
+             "text": "The Great Wall is a series of fortifications.\n\nIt is   not visible to the naked eye from low Earth orbit."},
+            {"title": "Factoid", "url": "https://en.wikipedia.org/wiki/Factoid", "text": "Unrelated."},
+        ]
+        no_wikipedia(self, articles)
+        quotes = [
+            {"source": 1, "quote": "It is not visible to the naked eye from low Earth orbit."},  # real (spacing differs)
+            {"source": 1, "quote": "It is clearly visible from the Moon."},  # made up
+            {"source": 2, "quote": "It is not visible to the naked eye from low Earth orbit."},  # wrong source
+            {"source": 9, "quote": "nothing here at all"},
+            {"source": "x"},
+        ]
+        judge = StubJudge(json.dumps(dict(FACT, quotes=quotes)))
         check = asyncio.run(judge.factcheck("great wall visible from space"))
-        self.assertEqual(check.sources, [("Artificial structures visible from space", ARTICLES[1]["url"])])
+        self.assertEqual(check.quotes, [("Great Wall of China", articles[0]["url"],
+                                         "It is not visible to the naked eye from low Earth orbit.")])
+        self.assertEqual(check.sources, [("Great Wall of China", articles[0]["url"])])
         self.assertEqual(self.queries, ["great wall visible from space"])
-        self.assertIn('<source n="2" title="Artificial structures visible from space">', judge.requests[0][1][0][1])
+        self.assertIn("word for word", judge.requests[0][1][0][1])
 
     def test_failed_search_falls_back_to_wikipedia(self):
         no_wikipedia(self, ARTICLES)
-        judge = SearchingJudge(None, plain=json.dumps(dict(FACT, sources_used=[1])))
+        judge = SearchingJudge(None, plain=json.dumps(dict(FACT, quotes=[{"source": 1, "quote": "A wall."}])))
         check = asyncio.run(judge.factcheck("great wall"))
-        self.assertEqual(check.sources, [("Great Wall of China", ARTICLES[0]["url"])])
+        self.assertEqual(check.quotes, [], "too short to count as a quote")
+        judge = SearchingJudge(None, plain=json.dumps(dict(FACT, quotes=[{"source": 2, "quote": "not the wall"}])))
+        self.assertEqual(asyncio.run(judge.factcheck("great wall")).sources, [])
 
     def test_search_answer_keeps_its_sources_even_with_prose_around_the_json(self):
         judge = SearchingJudge("Here is my answer:\n```json\n" + json.dumps(FACT) + "\n```")
@@ -389,9 +405,20 @@ class WikiTests(unittest.TestCase):
         import wiki
         self.assertEqual(wiki.keywords("could ja morant dunk over the great wall of china"), "ja morant dunk over great wall")
         self.assertEqual(wiki.evidence_block([]), "")
-        self.assertIn("sources_used", wiki.evidence_block(ARTICLES))
-        self.assertEqual(wiki.used_sources(ARTICLES, None), [])
-        self.assertEqual(len(wiki.used_sources(ARTICLES, [1, 3])), 2)
+        self.assertIn('"quotes"', wiki.evidence_block(ARTICLES))
+        self.assertEqual(wiki.verified_quotes(ARTICLES, None), [])
+        text = "Intro line about walls.\n== History ==\nUnrelated farming.\nThe wall can't be seen from orbit."
+        self.assertEqual(wiki.passages(text, "is the wall seen from orbit"),
+                         "Intro line about walls.\n\nThe wall can't be seen from orbit.")
+        self.assertTrue(wiki.verified_quotes(
+            [{"title": "W", "url": "u", "text": "The wall, built over centuries, is long."}],
+            [{"source": 1, "quote": "The wall … is long."}]), "ellipsis parts must each be in the article")
+
+    def test_quote_list_fits_an_embed_field(self):
+        from debate import quote_list
+        shown = quote_list([("T", "https://x", "word " * 100)] * 6)
+        self.assertLessEqual(len(shown), 1024)
+        self.assertIn("— [T](https://x)", shown)
 
 
 class ShopTests(unittest.TestCase):

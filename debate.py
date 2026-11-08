@@ -41,6 +41,28 @@ def source_list(sources: list[tuple[str, str]]) -> str:
     return "\n".join(lines) or "–"
 
 
+def quote_list(quotes: list[tuple[str, str, str]]) -> str:
+    """Each exact quote with a link to the article it's from, fitting in one embed field."""
+    blocks, size = [], 0
+    for title, url, quote in quotes:
+        text = quote if len(quote) <= 260 else quote[:257].rsplit(" ", 1)[0] + "…"
+        block = f"> “{text}”\n— [{title[:60]}]({url})"
+        if size + len(block) + 2 > 1024:
+            break
+        blocks.append(block)
+        size += len(block) + 2
+    return "\n\n".join(blocks) or "–"
+
+
+def sources_field(quotes: list[tuple[str, str, str]], sources: list[tuple[str, str]]) -> str | None:
+    """Exact quotes when there are any, otherwise plain links; None when there's nothing to show."""
+    if quotes:
+        return quote_list(quotes)
+    if sources:
+        return source_list(sources)
+    return None
+
+
 def is_mod(member: discord.Member) -> bool:
     return member.guild_permissions.manage_messages or member.guild_permissions.administrator
 
@@ -313,8 +335,8 @@ async def announce(bot, debate: Debate) -> None:
         embed.add_field(name="Reasoning", value=(ruling.reasoning or "–")[:1024], inline=False)
         if ruling.facts:
             embed.add_field(name="Facts checked", value="\n".join(f"• {fact}" for fact in ruling.facts)[:1024], inline=False)
-        if ruling.sources:
-            embed.add_field(name="Sources", value=source_list(ruling.sources), inline=False)
+        if shown := sources_field(ruling.quotes, ruling.sources):
+            embed.add_field(name="Sources", value=shown, inline=False)
         embed.add_field(name="Best speaker", value=(ruling.best_speaker or "–")[:1024], inline=True)
         embed.set_footer(text=f"Adjudicated by {judge.last_model} · AI can make mistakes")
     winners = debate.sides.get(winner, [])
