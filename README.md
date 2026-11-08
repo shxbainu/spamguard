@@ -73,6 +73,16 @@ For the chat, put the model you like best first. Bigger models hold a conversati
 
 The chat history is sent to the AI as a real back-and-forth conversation (its own earlier replies as its turns), which helps it follow what's going on. Keep `PERSONA` about who the bot is and how it feels about people; the bot's built-in chat rules already handle the casual texting style, and stacking extra style rules, slang lists or catchphrases in the personality makes it overact.
 
+### Profile status
+
+The bot cycles through statuses on its profile, switching every `STATUS_MINUTES` (10 by default). Set your own with `STATUSES` in `.env`, separated by `|`:
+
+```
+STATUSES="watching: over the server for ShxbaInu|serving ShxbaInu|destroying ben's cheeks|forcing luke to touch grass"
+```
+
+Start one with `watching:`, `playing:`, `listening:` or `competing:` to show it as "Watching …", "Playing …" and so on; anything else is a plain custom status. Discord shows one at a time, so they take turns. The bot always spells the nickname Kim John-Un (never Jong-Un), in chat, rulings and statuses.
+
 ## Punishment ladder
 
 Every offense, whatever the type, moves the member one step up:

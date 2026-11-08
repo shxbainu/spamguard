@@ -384,6 +384,19 @@ def refusal(recent: list[str]) -> str:
     return next((line for line in REFUSALS if line not in used), REFUSALS[0])
 
 
+# The nickname is Kim John-Un, never Jong-Un: "kim jong un", "jong-un", "kim jung" all become john.
+JONG_UN = re.compile(r"\bj[ou]ng(?=[\s-]?un\b)|(?<=\bkim )j[ou]ng\b", re.IGNORECASE)
+JOHN_UN_DASH = re.compile(r"\b(john)\s?(un)\b", re.IGNORECASE)
+
+
+def fix_nicknames(text: str | None) -> str | None:
+    """Spells Kim John-Un the way the server does, whatever the model wrote."""
+    if not text:
+        return text
+    text = JONG_UN.sub(lambda m: "John" if m.group(0)[0].isupper() else "john", text)
+    return JOHN_UN_DASH.sub(lambda m: f"{m.group(1)}-{m.group(2)}", text)
+
+
 def casual(
     text: str | None, allow_emoji: bool = True, names: list[str] = (), emojis_allowed: set[str] = frozenset(),
     recent: list[str] = (),
@@ -396,6 +409,7 @@ def casual(
     the bot's `recent` replies already said it; try-hard words that survived a rewrite are cut."""
     if not text:
         return text
+    text = fix_nicknames(text)
     text = DASH.sub(", ", text)
     text = QUOTES.sub("", text)
     text = ECHO_QUESTION.sub("", text)
@@ -462,7 +476,7 @@ def parse_verdict(text: str | None) -> Verdict | None:
         return None
     try:
         data = json.loads(text)
-        return Verdict(verdict=data["verdict"], reason=data["reason"], confident=data.get("confident", True) is not False)
+        return Verdict(verdict=data["verdict"], reason=fix_nicknames(data["reason"]), confident=data.get("confident", True) is not False)
     except (json.JSONDecodeError, KeyError, TypeError):
         log.warning("Couldn't read the AI's answer: %r", text[:200])
         return None
@@ -525,7 +539,7 @@ class Judge:
         if ruling:
             # The ruling reads like a neutral referee; only the one-liner is the bot talking, so only it gets the
             # chat-style tidy-up.
-            neutral = lambda text: re.sub(r"[ \t]{2,}", " ", EMOJI.sub("", text)).strip()
+            neutral = lambda text: fix_nicknames(re.sub(r"[ \t]{2,}", " ", EMOJI.sub("", text)).strip())
             ruling.topic, ruling.verdict, ruling.reasoning = map(neutral, (ruling.topic, ruling.verdict, ruling.reasoning))
             ruling.facts = [neutral(fact) for fact in ruling.facts]
             persona_emojis = {emoji.replace("\ufe0f", "") for emoji in EMOJI.findall(persona)}

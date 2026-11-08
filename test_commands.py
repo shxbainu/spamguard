@@ -2,7 +2,9 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
-from bot import CHAT_COOLDOWN_SECONDS, SpamGuard, shutup_blocker, speaker
+import discord
+
+from bot import CHAT_COOLDOWN_SECONDS, STATUSES, SpamGuard, make_status, shutup_blocker, speaker
 from detectors import PerMinuteBudget, StrikeTracker
 from judge import Verdict
 
@@ -118,6 +120,32 @@ class InARowTests(unittest.TestCase):
         self.assertEqual([entry["detail"] for entry in logged],
                          ["strike 1 of 3 in a row", "strike 2 of 3 in a row", "cleared 2 strike(s) in a row"])
         self.assertEqual(logged[0]["verdict"], "low_effort")
+
+
+class StatusTests(unittest.TestCase):
+    def test_activity_types_and_custom_statuses(self):
+        watching = make_status("watching: over the server for ShxbaInu")
+        self.assertEqual((watching.type, watching.name), (discord.ActivityType.watching, "over the server for ShxbaInu"))
+        custom = make_status("running from dictator kim jong-un")
+        self.assertIsInstance(custom, discord.CustomActivity)
+        self.assertEqual(custom.name, "running from dictator kim john-un")
+        self.assertIsInstance(make_status("note: not a type"), discord.CustomActivity)
+
+    def test_default_statuses(self):
+        self.assertIn("forcing luke to touch grass", STATUSES)
+        self.assertIn("watching: over the server for ShxbaInu", STATUSES)
+
+
+class NicknameTests(unittest.TestCase):
+    def test_always_john_un(self):
+        from judge import casual, fix_nicknames
+        for text in ("Kim Jong-Un", "kim jong un", "kim jongun", "jong-un", "kim jung un", "Kim Jong"):
+            self.assertNotIn("jong", fix_nicknames(text).lower(), text)
+            self.assertNotIn("jung", fix_nicknames(text).lower(), text)
+        self.assertEqual(fix_nicknames("Kim Jong-Un is short"), "Kim John-Un is short")
+        self.assertEqual(fix_nicknames("kim jong un again"), "kim john-un again")
+        self.assertEqual(casual("sit down kim jong-un"), "sit down kim john-un")
+        self.assertEqual(fix_nicknames("john said hi"), "john said hi")
 
 
 if __name__ == "__main__":

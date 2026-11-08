@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
-from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, SecondOpinion, make_judges
+from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, SecondOpinion, fix_nicknames, make_judges
 from storage import Store
 
 load_dotenv()
@@ -94,6 +94,16 @@ SHUTUP_SECONDS = env_int("SHUTUP_SECONDS", 10)
 SHUTUP_WINDOW = 7 * 86400
 SETTLE_COOLDOWN_SECONDS = env_int("SETTLE_COOLDOWN_SECONDS", 30)
 
+# What the bot shows on its profile, one at a time, changing every STATUS_MINUTES. Separate them with |. Start one
+# with "watching:", "playing:", "listening:" or "competing:" for that kind of activity ("Watching over the server
+# for ShxbaInu"); anything else is a custom status, shown as plain text.
+DEFAULT_STATUSES = (
+    "watching: over the server for ShxbaInu|serving ShxbaInu|destroying ben's cheeks|"
+    "running from dictator kim john-un|forcing luke to touch grass|watching: ben get timed out"
+)
+STATUSES = [entry.strip() for entry in (os.getenv("STATUSES", "").strip() or DEFAULT_STATUSES).split("|") if entry.strip()]
+STATUS_MINUTES = max(1, env_int("STATUS_MINUTES", 10))
+
 # Keep a log of checked messages and the bot's replies and rulings for the dashboard, for this many days.
 LOG_MESSAGES = env_bool("LOG_MESSAGES", True)
 LOG_DAYS = env_int("LOG_DAYS", 7)
@@ -150,6 +160,23 @@ async def images_in(message: discord.Message) -> list[tuple[str, bytes]]:
     return images
 
 
+ACTIVITY_TYPES = {
+    "playing": discord.ActivityType.playing,
+    "watching": discord.ActivityType.watching,
+    "listening": discord.ActivityType.listening,
+    "competing": discord.ActivityType.competing,
+}
+
+
+def make_status(entry: str) -> discord.BaseActivity:
+    """"watching: over the server" is a Watching activity; anything else is a custom status."""
+    kind, _, rest = entry.partition(":")
+    kind = kind.strip().lower()
+    if rest.strip() and kind in ACTIVITY_TYPES:
+        return discord.Activity(type=ACTIVITY_TYPES[kind], name=fix_nicknames(rest.strip())[:128])
+    return discord.CustomActivity(name=fix_nicknames(entry)[:128])
+
+
 def speaker(member: discord.abc.User) -> str:
     """How a person appears to the AI: nickname plus @username, so it can tell who's who."""
     if member.display_name.lower() == member.name.lower():
@@ -198,6 +225,7 @@ class SpamGuard(discord.Client):
         self.saved_roles: dict[tuple[int, int], list[int]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._dashboard = None
+        self._status_task: asyncio.Task | None = None
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -218,6 +246,8 @@ class SpamGuard(discord.Client):
             log.info("Dashboard running at http://%s:%d", DASHBOARD_HOST, DASHBOARD_PORT)
 
     async def close(self) -> None:
+        if self._status_task:
+            self._status_task.cancel()
         if self._dashboard:
             await self._dashboard.cleanup()
         await super().close()
@@ -239,6 +269,19 @@ class SpamGuard(discord.Client):
             )
         else:
             log.info("Personality: %s", PERSONA if len(PERSONA) <= 100 else PERSONA[:100] + "…")
+        if STATUSES and not self._status_task:  # on_ready runs again after reconnects
+            self._status_task = asyncio.create_task(self.rotate_statuses())
+
+    async def rotate_statuses(self) -> None:
+        """Shows each of STATUSES in turn, changing every STATUS_MINUTES."""
+        index = 0
+        while True:
+            try:
+                await self.change_presence(activity=make_status(STATUSES[index % len(STATUSES)]))
+            except Exception:
+                log.exception("Couldn't change the bot's status")
+            index += 1
+            await asyncio.sleep(STATUS_MINUTES * 60)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
