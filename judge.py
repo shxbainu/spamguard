@@ -37,11 +37,13 @@ Aura is separate from the verdict. Almost every message gets "aura": "none"; it'
 - "comeback": a genuinely clever or funny reply that lands against someone who came at the author (or at someone else). Ordinary insults, swearing, "ur mid" or just being loud don't count.
 - "callout": correctly calls out something in the recent chat that is clearly false or contradicts itself, ideally with the right fact. Set "aura_target" to the name of the person being called out, exactly as it's written in the chat.
 - "false_claim": states something as fact that is blatantly and verifiably false. Opinions, predictions, jokes, sarcasm, obvious exaggeration and anything you aren't certain about don't count.
+- "bad_take": states an opinion that almost everyone would agree is terrible: trashing something nearly everyone likes ("oranges taste like shit", "puppies are ugly", "water is disgusting") or praising something nearly everyone hates. It has to be close to universal. Anything people genuinely split on doesn't count (pineapple on pizza, cats vs dogs, which game or team or artist is best, politics, religion), and neither does an obvious joke at their own expense or a complaint about one specific bad experience.
 Your own opinion of the topic doesn't matter. When unsure, "none".
 "aura_level" says how big the moment is, from 1 to 5, and is 0 when aura is "none":
 - comeback: 1 decent, 2 good, 3 really funny or clever, 4 a brutal line the chat won't let go of, 5 legendary (the best comeback you've seen; almost never).
 - callout: 1 a small slip, 2 a clear error, 3 an important or confident claim taken apart with the right fact, 4 someone acting like an expert completely exposed, 5 a total, undeniable takedown.
 - false_claim: 1 a small mistake stated as fact, 2 plainly wrong, 3 confidently wrong about something most people know, 4 wildly wrong and doubling down, 5 absurdly, spectacularly wrong.
+- bad_take: 1 a weird dislike of something most people like, 2 clearly a bad take, 3 a take almost nobody would defend, 4 an awful take and doubling down, 5 the worst take you've seen.
 Most standout moments are 1 or 2; save 4 and 5 for moments that are genuinely exceptional.
 "aura_reason" is under 12 words saying what happened, and "aura_target" and "aura_reason" are "" when aura is "none".
 
@@ -63,7 +65,7 @@ VERDICT_SCHEMA = {
         "verdict": {"type": "string", "enum": ["ok", "low_effort", "disruptive"]},
         "reason": {"type": "string"},
         "confident": {"type": "boolean"},
-        "aura": {"type": "string", "enum": ["none", "comeback", "callout", "false_claim"]},
+        "aura": {"type": "string", "enum": ["none", "comeback", "callout", "false_claim", "bad_take"]},
         "aura_target": {"type": "string"},
         "aura_reason": {"type": "string"},
         "aura_level": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]},
@@ -111,7 +113,7 @@ SETTLE_SCHEMA = {
     "additionalProperties": False,
 }
 
-AURA_KINDS = ("none", "comeback", "callout", "false_claim")
+AURA_KINDS = ("none", "comeback", "callout", "false_claim", "bad_take")
 
 DEBATE_PROMPT = """You are the impartial adjudicator of a debate held in a Discord server. Two sides argued a motion: "For" (agrees with the motion) and "Against" (disagrees). You get every speech in order.
 
@@ -319,7 +321,7 @@ class Verdict:
     escalated: bool = False  # a second model was asked
     overruled: bool = False  # ...and it disagreed with the first
     first: str = ""  # the first model's call when a second was asked, e.g. "gpt-oss-20b: low_effort (gibberish)"
-    aura: str = "none"  # none, comeback, callout or false_claim
+    aura: str = "none"  # none, comeback, callout, false_claim or bad_take
     aura_target: str = ""  # callouts: who was called out, as named in the chat
     aura_reason: str = ""
     aura_level: int = 0  # 1 (small) to 5 (legendary) when there's aura

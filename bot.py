@@ -21,6 +21,7 @@ import casino
 import debate
 import factcheck
 import shop
+from cards import LOSS, card
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
@@ -706,10 +707,10 @@ async def shutup_cmd(interaction: discord.Interaction, user: discord.Member, lon
     )
     bought = store.items(guild_id, author.id).get("shutup", 0)
     extra = f" + {bought} bought" if bought else ""
-    await interaction.response.send_message(
-        f"🤫 {author.mention} told {user.mention} to shut up. Timed out for {format_duration(seconds)}. "
-        f"({author.display_name} has {weekly_left} /shutup{'' if weekly_left == 1 else 's'} left this week{extra})"
-    )
+    embed = card(author, "🤫 Shut up", f"**{author.display_name}** told **{user.display_name}** to shut up.", color=LOSS)
+    embed.add_field(name="Timeout", value=format_duration(seconds), inline=True)
+    embed.add_field(name="Left this week", value=f"{weekly_left}{extra}", inline=True)
+    await interaction.response.send_message(user.mention, embed=embed, allowed_mentions=discord.AllowedMentions(users=[user]))
 
 
 @app_commands.command(name="settleargument", description="The AI reads the argument in this channel and decides who's right")

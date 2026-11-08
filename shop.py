@@ -14,6 +14,7 @@ from typing import Literal, Optional
 import discord
 from discord import app_commands
 
+from cards import AURA, WIN, card
 from casino import balance, fmt, welcome
 
 log = logging.getLogger("spamguard.shop")
@@ -55,9 +56,11 @@ def clean_text(text: str, limit: int) -> str:
 async def shop_cmd(interaction: discord.Interaction) -> None:
     store, member = interaction.client.store, interaction.user
     welcome(store, member)
-    lines = [f"**{name}** ({fmt(price)}): {about}  ·  `/buy {item}`" for item, (price, name, about) in ITEMS.items()]
-    embed = discord.Embed(title="🛒 Aura shop", description="\n".join(lines), color=0x9B59B6)
-    embed.set_footer(text=f"You have {fmt(balance(store, member.guild.id, member.id))}")
+    have = balance(store, member.guild.id, member.id)
+    embed = card(member, "🛒 Aura shop", f"You have **{fmt(have)}**.", color=AURA)
+    for item, (price, name, about) in ITEMS.items():
+        mark = "" if have >= price else "🔒 "
+        embed.add_field(name=f"{mark}{name} · {price:,}", value=f"{about}\n`/buy {item}`", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -102,16 +105,21 @@ async def buy_cmd(
         store.add_aura(guild.id, member.id, member.display_name, price, "shop", f"refund: {name}")
         return f"{why} You got your {fmt(price)} back."
 
-    left = f"Balance {fmt(balance(store, guild.id, member.id))}."
+    def receipt(title: str, description: str) -> discord.Embed:
+        embed = card(member, title, description, color=WIN)
+        embed.add_field(name="Paid", value=fmt(price), inline=True)
+        embed.add_field(name="Balance", value=fmt(balance(store, guild.id, member.id)), inline=True)
+        return embed
+
     if item in ("shutup", "longshutup"):
         store.add_item(guild.id, member.id, item)
         count = store.items(guild.id, member.id).get(item, 0)
         how = "/shutup with long: True" if item == "longshutup" else "/shutup after your weekly ones run out"
-        await interaction.response.send_message(f"Bought a {name}. You have {count}; use it with {how}. {left}", ephemeral=True)
+        await interaction.response.send_message(embed=receipt(f"🛒 Bought: {name}", f"You have **{count}**. Use it with {how}."), ephemeral=True)
     elif item == "shield":
         until = max(time.time(), shield_until(store, guild.id, member.id)) + SHIELD_SECONDS
         store.set_state(f"shield:{guild.id}:{member.id}", str(until))
-        await interaction.response.send_message(f"🛡️ {member.display_name} can't be /shutup'd until <t:{int(until)}:t>.")
+        await interaction.response.send_message(embed=receipt("🛡️ Shield up", f"Nobody can /shutup **{member.display_name}** until <t:{int(until)}:t>."))
     elif item == "nickname":
         nick = clean_text(text, 32)
         key = f"nick:{guild.id}:{user.id}"
@@ -124,7 +132,7 @@ async def buy_cmd(
             return
         store.set_state(key, json.dumps({"old": old, "until": time.time() + NICKNAME_SECONDS}))
         await interaction.response.send_message(
-            f"🏷️ {member.display_name} renamed {user.mention} to **{nick}** for an hour.",
+            user.mention, embed=receipt("🏷️ Renamed", f"**{member.display_name}** renamed them to **{nick}** for an hour."),
             allowed_mentions=discord.AllowedMentions(users=[user]),
         )
     elif item == "roast":
@@ -145,7 +153,7 @@ async def buy_cmd(
             await bot.show_status(status)
         except discord.HTTPException:
             pass
-        await interaction.response.send_message(f"{member.display_name} set my status to **{status}** for an hour.")
+        await interaction.response.send_message(embed=receipt("💬 Status set", f"My status is **{status}** for the next hour."))
 
 
 async def undo_expired(bot) -> None:

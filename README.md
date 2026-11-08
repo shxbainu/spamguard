@@ -213,6 +213,7 @@ The moderation check already reads each message, so it also spots standout momen
 | Comeback (decent → legendary) | +25 | +50 | +100 | +250 | +500 |
 | Calling out something false (small slip → total takedown); the person called out loses the same | +25 | +50 | +100 | +200 | +300 |
 | Saying something false (small mistake → absurdly wrong) | −25 | −50 | −100 | −250 | −500 |
+| A take almost everyone would call terrible ("oranges taste like shit"); real splits like pineapple on pizza don't count | −25 | −50 | −100 | −250 | −500 |
 
 Winning a `/debate` is +100 each, and a message fact-checked as false is −100 for its author and +50 for the checker. Most moments land at 1 or 2; 4 and 5 are for genuinely exceptional ones.
 

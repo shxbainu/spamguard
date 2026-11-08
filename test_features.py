@@ -160,6 +160,15 @@ class AuraAwardTests(unittest.TestCase):
         self.assertEqual([aura.points_for("false_claim", level) for level in range(1, 6)], [-25, -50, -100, -250, -500])
         self.assertEqual(aura.points_for("comeback", 9), 500, "out of range is clamped")
 
+    def test_bad_take_loses_aura(self):
+        verdict = Verdict("ok", "fine", aura="bad_take", aura_reason="trashed oranges", aura_level=1)
+        asyncio.run(aura.award(self.bot(), self.message(), verdict, "persona"))
+        self.assertEqual(self.store.aura_total(1, 6), -25)
+        self.assertTrue(self.replies[0].endswith("-25 aura"))
+        self.assertEqual(parse_verdict(json.dumps({"verdict": "ok", "reason": "x", "confident": True, "aura": "bad_take",
+                                                   "aura_target": "", "aura_reason": "y", "aura_level": 1})).aura, "bad_take")
+        self.assertEqual(self.store.aura_from_moments(1, 6), -25)
+
     def test_false_claim_falls_back_without_ai_and_has_a_cooldown(self):
         verdict = Verdict("ok", "fine", aura="false_claim", aura_reason="said 2+2=5", aura_level=3)
         asyncio.run(aura.award(self.bot(), self.message(), verdict, "persona"))
@@ -343,7 +352,7 @@ class CasinoTests(unittest.TestCase):
 
     def test_slots(self):
         from casino import slot_payout
-        self.assertEqual(slot_payout(["🍑", "🍑", "🍑"], 100), (2500, "JACKPOT"))
+        self.assertEqual(slot_payout(["🍑", "🍑", "🍑"], 100), (2500, "**JACKPOT!**"))
         self.assertEqual(slot_payout(["💎", "💎", "💎"], 100)[0], 1000)
         self.assertEqual(slot_payout(["💎", "🍒", "💎"], 100)[0], 150)
         self.assertEqual(slot_payout(["💎", "🍒", "🍋"], 100)[0], 0)
@@ -364,11 +373,11 @@ class CasinoTests(unittest.TestCase):
         self.assertEqual(hand_value([("A", "♠"), ("A", "♥"), ("9", "♦")]), 21)
         self.assertEqual(hand_value([("10", "♠"), ("9", "♥"), ("5", "♦")]), 24)
         natural, nineteen = [("A", "♠"), ("K", "♥")], [("10", "♠"), ("9", "♥")]
-        self.assertEqual(blackjack_payout(natural, nineteen, 100), (250, "blackjack!"))
-        self.assertEqual(blackjack_payout(nineteen, nineteen, 100), (100, "push"))
+        self.assertEqual(blackjack_payout(natural, nineteen, 100), (250, "Blackjack!"))
+        self.assertEqual(blackjack_payout(nineteen, nineteen, 100), (100, "Push"))
         self.assertEqual(blackjack_payout(nineteen, [("10", "♠"), ("8", "♥")], 100)[0], 200)
         self.assertEqual(blackjack_payout([("10", "♠"), ("9", "♥"), ("5", "♦")], nineteen, 100)[0], 0)
-        self.assertEqual(blackjack_payout(nineteen, [("10", "♠"), ("6", "♥"), ("9", "♦")], 100)[1], "dealer busts")
+        self.assertEqual(blackjack_payout(nineteen, [("10", "♠"), ("6", "♥"), ("9", "♦")], 100)[1], "Dealer busts")
 
     def test_higher_lower_odds(self):
         from casino import higher_lower_odds

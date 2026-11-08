@@ -14,6 +14,8 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+from cards import AURA, LOSS, STARTING_REASON, card, signed
+
 load_dotenv()
 
 AURA_ENABLED = (os.getenv("AURA_ENABLED") or "true").strip().lower() in ("1", "true", "yes", "on")
@@ -25,29 +27,33 @@ LEVEL_POINTS = {
     "comeback": [25, 50, 100, 250, 500],
     "callout": [25, 50, 100, 200, 300],
     "false_claim": [-25, -50, -100, -250, -500],
+    "bad_take": [-25, -50, -100, -250, -500],
 }
 DEBATE_POINTS = 100
 LEVEL_NAMES = {1: "decent", 2: "good", 3: "big", 4: "huge", 5: "legendary"}
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "debate": "won a debate", "gift": "gift", "shop": "shop",
+    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "gift": "gift", "shop": "shop",
 }
 # What the bot is reacting to, for the one-liner it writes; {size} is how big the moment was.
 SITUATIONS = {
     "comeback": "{name} just hit someone with a {size} comeback ({reason}). Give them props that match how good it was",
     "callout": "{name} just called out {target} ({size}) for saying something false ({reason}). React to {target} getting exposed or {name} being smart, matching how big it was",
     "false_claim": "{name} just said something {size} false ({reason}). Call it out like they're dumb, matching how bad it was",
+    "bad_take": "{name} just had a {size} take that basically nobody would agree with ({reason}). Clown them for it, matching how bad it was",
 }
 SIZES = {
     "comeback": {1: "decent", 2: "good", 3: "really good", 4: "brutal", 5: "legendary, all-time"},
     "callout": {1: "small", 2: "clear", 3: "big", 4: "brutal", 5: "total"},
     "false_claim": {1: "slightly", 2: "plainly", 3: "confidently", 4: "wildly", 5: "absurdly, spectacularly"},
+    "bad_take": {1: "weird", 2: "bad", 3: "terrible", 4: "awful", 5: "historically bad"},
 }
 # Used when the AI can't be reached: small moments (levels 1-2) and big ones (3-5).
 FALLBACK = {
     "comeback": (["ok that was decent", "lowk good"], ["oh he cooked", "nah that was tuff", "BRO 😭"]),
     "callout": (["fair point", "true"], ["too smart??", "exposed lmao", "caught in 4k"]),
     "false_claim": (["thats not true", "nah"], ["damn ur stupid", "holy shit this guy is dumb", "what are u on"]),
+    "bad_take": (["weird take", "nah thats crazy"], ["worst take ive ever seen", "who hurt you", "get help"]),
 }
 
 
@@ -131,42 +137,73 @@ def give_debate_aura(store, guild_id: int, winners: list[discord.Member], motion
 aura_commands = app_commands.Group(name="aura", description="Aura points", guild_only=True)
 
 
+LABELS = {
+    "comeback": "Comeback", "callout": "Called someone out", "called_out": "Got called out",
+    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "gift": "Gift", "shop": "Shop",
+}
+
+
+def history_line(row: dict) -> str:
+    reason = (row["reason"] or "").strip()
+    if len(reason) > 70:
+        reason = reason[:69].rstrip() + "…"
+    detail = f" · {reason}" if reason else ""
+    return f"`{signed(row['points']):>6}` **{LABELS.get(row['kind'], row['kind'].title())}**{detail} · <t:{int(row['created_at'])}:R>"
+
+
+def aura_card(store, guild_id: int, user: discord.abc.User, now: float | None = None) -> discord.Embed:
+    from shop import ITEMS, shield_until
+
+    total = store.aura_total(guild_id, user.id)
+    place, people = store.aura_rank(guild_id, user.id)
+    standing = f"Rank **#{place}** of {people}" if place else "Not on the leaderboard yet"
+    embed = card(user, description=f"## ✨ {total:,} aura\n{standing}", color=LOSS if total < 0 else AURA)
+
+    moments, net, played = store.aura_from_moments(guild_id, user.id), store.game_net(guild_id, user.id), store.games_played(guild_id, user.id)
+    embed.add_field(name="From chat", value=signed(moments) if moments else "0", inline=True)
+    embed.add_field(
+        name="Casino", value=(f"{signed(net) if net else 'Even'} · {played:,} game{'' if played == 1 else 's'}" if played else "No games yet"), inline=True,
+    )
+
+    recent = [row for row in store.aura_history(guild_id, user.id, limit=6) if row["reason"] != STARTING_REASON][:5]
+    empty = "Nothing yet. Good comebacks, callouts and false claims show up here."
+    embed.add_field(name="Recent", value="\n".join(map(history_line, recent))[:1024] or empty, inline=False)
+
+    owned = [f"{count}× {ITEMS[item][1] if item in ITEMS else item}" for item, count in store.items(guild_id, user.id).items()]
+    until = shield_until(store, guild_id, user.id)
+    if until > (now or time.time()):
+        owned.append(f"🛡️ Shield until <t:{int(until)}:t>")
+    if owned:
+        embed.add_field(name="Items", value="\n".join(owned)[:1024], inline=False)
+    return embed
+
+
 @aura_commands.command(name="check", description="See someone's aura and what they got it for")
 @app_commands.describe(user="Whose aura (default: yours)")
 async def check_cmd(interaction: discord.Interaction, user: Optional[discord.Member] = None) -> None:
-    store = interaction.client.store
-    user = user or interaction.user
-    total = store.aura_total(interaction.guild_id, user.id)
-    lines = [f"**{user.display_name}** has **{total:,} aura**"]
-    for row in store.aura_history(interaction.guild_id, user.id):
-        why = f": {row['reason']}" if row["reason"] else ""
-        lines.append(f"`{aura_text(row['points']):>10}` {WHAT.get(row['kind'], row['kind'])}{why} <t:{int(row['created_at'])}:R>")
-    if len(lines) == 1:
-        lines.append("Nothing yet.")
-    extras = []
-    net = store.game_net(interaction.guild_id, user.id)
-    if net:
-        extras.append(f"casino: {'+' if net > 0 else ''}{net:,}")
-    owned = store.items(interaction.guild_id, user.id)
-    if owned:
-        extras.append("items: " + ", ".join(f"{count}x {item}" for item, count in owned.items()))
-    from shop import shield_until
-    if (until := shield_until(store, interaction.guild_id, user.id)) > time.time():
-        extras.append(f"🛡️ shielded until <t:{int(until)}:t>")
-    if extras:
-        lines.append(" · ".join(extras))
-    await interaction.response.send_message("\n".join(lines)[:2000], allowed_mentions=discord.AllowedMentions.none())
+    embed = aura_card(interaction.client.store, interaction.guild_id, user or interaction.user)
+    await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+
+def leaderboard_card(rows: list[dict], viewer_id: int, place: int, total: int) -> discord.Embed:
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for index, row in enumerate(rows):
+        marker = medals[index] if index < 3 else f"`{index + 1}.`"
+        you = " ← you" if row["user_id"] == viewer_id else ""
+        lines.append(f"{marker} **{row['user_name']}** · {row['points']:,}{you}")
+    embed = discord.Embed(title="🏆 Aura leaderboard", description="\n".join(lines), color=AURA)
+    if place and all(row["user_id"] != viewer_id for row in rows):
+        embed.set_footer(text=f"You: #{place} · {total:,} aura")
+    return embed
 
 
 @aura_commands.command(name="leaderboard", description="Who has the most aura")
 async def leaderboard_cmd(interaction: discord.Interaction) -> None:
-    rows = interaction.client.store.aura_leaderboard(interaction.guild_id)
+    store, guild_id, viewer = interaction.client.store, interaction.guild_id, interaction.user.id
+    rows = store.aura_leaderboard(guild_id)
     if not rows:
         await interaction.response.send_message("Nobody has any aura yet.", ephemeral=True)
         return
-    medals = ["🥇", "🥈", "🥉"]
-    lines = [
-        f"{medals[i] if i < 3 else f'`{i + 1}.`'} **{row['user_name']}**: {row['points']:,}" for i, row in enumerate(rows)
-    ]
-    embed = discord.Embed(title="Aura leaderboard", description="\n".join(lines), color=0x9B59B6)
+    embed = leaderboard_card(rows, viewer, store.aura_rank(guild_id, viewer)[0], store.aura_total(guild_id, viewer))
     await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())

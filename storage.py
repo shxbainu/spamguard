@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS aura (
     user_id INTEGER NOT NULL,
     user_name TEXT NOT NULL,
     points INTEGER NOT NULL,
-    kind TEXT NOT NULL,              -- comeback, callout, called_out, false_claim or debate
+    kind TEXT NOT NULL,              -- comeback, callout, called_out, false_claim, bad_take, debate, a game, gift or shop
     reason TEXT,
     message TEXT
 );
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS inventory (
 # Aura kinds from the casino; /aura check leaves them out of someone's recent history so it shows what they did.
 GAME_KINDS = ("coinflip", "slots", "blackjack", "higherlower", "roulette", "duel")
 # Kinds earned from a message (the per-person cooldown only looks at these).
-MESSAGE_KINDS = ("comeback", "callout", "false_claim")
+MESSAGE_KINDS = ("comeback", "callout", "false_claim", "bad_take")
 
 EVENT_FIELDS = (
     "guild_id", "kind", "user_id", "user_name", "channel_name", "content", "verdict", "reason", "model",
@@ -334,6 +334,30 @@ class Store:
             return False
         self.add_aura(guild_id, user_id, user_name, -amount, kind, reason)
         return True
+
+    def aura_rank(self, guild_id: int, user_id: int) -> tuple[int, int]:
+        """(this person's place on the leaderboard, how many people are on it); place 0 if they aren't."""
+        rows = self.db.execute(
+            "SELECT user_id FROM aura WHERE guild_id = ? GROUP BY user_id ORDER BY SUM(points) DESC", (guild_id,),
+        ).fetchall()
+        ids = [row[0] for row in rows]
+        return (ids.index(user_id) + 1 if user_id in ids else 0), len(ids)
+
+    def aura_from_moments(self, guild_id: int, user_id: int) -> int:
+        """Aura gained or lost from comebacks, callouts, false claims and debates."""
+        row = self.db.execute(
+            "SELECT COALESCE(SUM(points), 0) FROM aura WHERE guild_id = ? AND user_id = ? AND kind IN "
+            "('comeback', 'callout', 'called_out', 'false_claim', 'bad_take', 'debate')",
+            (guild_id, user_id),
+        )
+        return row.fetchone()[0]
+
+    def games_played(self, guild_id: int, user_id: int) -> int:
+        row = self.db.execute(
+            f"SELECT COUNT(*) FROM aura WHERE guild_id = ? AND user_id = ? AND reason = 'bet' AND kind IN ({', '.join('?' * len(GAME_KINDS))})",
+            (guild_id, user_id, *GAME_KINDS),
+        )
+        return row.fetchone()[0]
 
     def game_net(self, guild_id: int, user_id: int) -> int:
         """Aura won (or lost, if negative) in the casino overall."""

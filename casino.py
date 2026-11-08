@@ -12,6 +12,8 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+from cards import PLAYING, STARTING_REASON, WIN, add_result, card
+
 load_dotenv()
 
 START_AURA = int(os.getenv("CASINO_START_AURA") or 500)
@@ -36,7 +38,7 @@ def welcome(store, member: discord.Member) -> int:
     if START_AURA <= 0 or store.get_state(key):
         return 0
     store.set_state(key, "1")
-    store.add_aura(member.guild.id, member.id, member.display_name, START_AURA, "gift", "casino starting aura")
+    store.add_aura(member.guild.id, member.id, member.display_name, START_AURA, "gift", STARTING_REASON)
     return START_AURA
 
 
@@ -89,15 +91,9 @@ def pay(store, member: discord.Member, amount: int, game: str, reason: str = "wi
         store.add_aura(member.guild.id, member.id, member.display_name, amount, game, reason)
 
 
-def result_line(store, member: discord.Member, bet: int, payout: int) -> str:
-    net = payout - bet
-    if net > 0:
-        outcome = f"**+{fmt(net)}**"
-    elif net < 0:
-        outcome = f"**-{fmt(-net)}**"
-    else:
-        outcome = "**money back**"
-    return f"{outcome} · balance {fmt(balance(store, member.guild.id, member.id))}"
+def game_card(store, member: discord.Member, title: str, body: str, bet: int, payout: int) -> discord.Embed:
+    """A finished game: what happened, colored by the result, with Bet / Won / Balance."""
+    return add_result(card(member, title, body), bet, payout, balance(store, member.guild.id, member.id))
 
 
 game_cooldown = app_commands.checks.cooldown(1, 3, key=lambda i: i.user.id)
@@ -117,9 +113,8 @@ async def coinflip_cmd(interaction: discord.Interaction, bet: str, call: Literal
     side = random.choice(["heads", "tails"])
     payout = amount * 2 if side == call else 0
     pay(store, member, payout, "coinflip")
-    await interaction.response.send_message(
-        f"🪙 **{side.title()}!** {member.display_name} called {call}. {result_line(store, member, amount, payout)}"
-    )
+    body = f"## {side.title()}\nYou called **{call}**."
+    await interaction.response.send_message(embed=game_card(store, member, "🪙 Coin flip", body, amount, payout))
 
 
 SLOT_SYMBOLS = ["🍒", "🍋", "🔔", "💎", "7️⃣", "🍑"]
@@ -131,10 +126,10 @@ def slot_payout(reels: list[str], bet: int) -> tuple[int, str]:
     counts = {symbol: reels.count(symbol) for symbol in reels}
     best = max(counts.values())
     if best == 3:
-        return (bet * 25, "JACKPOT") if reels[0] == JACKPOT else (bet * 10, "three of a kind")
+        return (bet * 25, "**JACKPOT!**") if reels[0] == JACKPOT else (bet * 10, "**Three of a kind**")
     if best == 2:
-        return bet * 3 // 2, "pair"
-    return 0, "nothing"
+        return bet * 3 // 2, "**Pair**"
+    return 0, "Nothing"
 
 
 @app_commands.command(name="slots", description="Spin the slots: pair 1.5x, three of a kind 10x, three 🍑 25x")
@@ -149,9 +144,8 @@ async def slots_cmd(interaction: discord.Interaction, bet: str) -> None:
     reels = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
     payout, what = slot_payout(reels, amount)
     pay(store, member, payout, "slots")
-    await interaction.response.send_message(
-        f"🎰 **[ {' '.join(reels)} ]** {what}. {result_line(store, member, amount, payout)}"
-    )
+    body = f"## {'  '.join(reels)}\n{what}"
+    await interaction.response.send_message(embed=game_card(store, member, "🎰 Slots", body, amount, payout))
 
 
 RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
@@ -192,10 +186,8 @@ async def roulette_cmd(interaction: discord.Interaction, bet: str, on: str) -> N
     payout = roulette_payout(on, number, amount)
     color = "🟢" if number == 0 else ("🔴" if number in RED else "⚫")
     pay(store, member, payout, "roulette")
-    await interaction.response.send_message(
-        f"🎡 The ball lands on **{color} {number}** ({member.display_name} bet on {on.lower()}). "
-        f"{result_line(store, member, amount, payout)}"
-    )
+    body = f"## {color} {number}\nYou bet on **{on.lower()}**."
+    await interaction.response.send_message(embed=game_card(store, member, "🎡 Roulette", body, amount, payout))
 
 
 # ---- cards ------------------------------------------------------------------------
@@ -229,18 +221,18 @@ def blackjack_payout(player: list, dealer: list, bet: int) -> tuple[int, str]:
     """(payout, result) once both hands are finished."""
     mine, theirs = hand_value(player), hand_value(dealer)
     if mine > 21:
-        return 0, "bust"
+        return 0, "Bust"
     if is_blackjack(player) and not is_blackjack(dealer):
-        return bet * 5 // 2, "blackjack!"
+        return bet * 5 // 2, "Blackjack!"
     if is_blackjack(dealer) and not is_blackjack(player):
-        return 0, "dealer blackjack"
+        return 0, "Dealer blackjack"
     if theirs > 21:
-        return bet * 2, "dealer busts"
+        return bet * 2, "Dealer busts"
     if mine > theirs:
-        return bet * 2, "you win"
+        return bet * 2, "You win"
     if mine == theirs:
-        return bet, "push"
-    return 0, "dealer wins"
+        return bet, "Push"
+    return 0, "Dealer wins"
 
 
 class Blackjack(discord.ui.View):
@@ -251,15 +243,23 @@ class Blackjack(discord.ui.View):
         self.dealer = [draw(), draw()]
         self.finished = False
         self.result = ""
+        self.payout = 0
         self.message: discord.Message | None = None
 
     def embed(self) -> discord.Embed:
-        dealer = show(self.dealer) + f" ({hand_value(self.dealer)})" if self.finished else f"{show(self.dealer[:1])} `??`"
-        embed = discord.Embed(title=f"🃏 Blackjack: {self.member.display_name} bet {fmt(self.bet)}", color=0x2C3E50)
-        embed.add_field(name="Your hand", value=f"{show(self.player)} ({hand_value(self.player)})", inline=False)
-        embed.add_field(name="Dealer", value=dealer, inline=False)
+        dealer = show(self.dealer) if self.finished else f"{show(self.dealer[:1])} `??`"
+        dealer_total = f"Dealer · {hand_value(self.dealer)}" if self.finished else "Dealer"
         if self.finished:
-            embed.add_field(name="Result", value=self.result, inline=False)
+            embed = card(self.member, "🃏 Blackjack", f"**{self.result}**")
+        else:
+            embed = card(self.member, "🃏 Blackjack", color=PLAYING)
+        embed.add_field(name=f"You · {hand_value(self.player)}", value=show(self.player), inline=True)
+        embed.add_field(name=dealer_total, value=dealer, inline=True)
+        if self.finished:
+            embed.add_field(name="\u200b", value="\u200b", inline=False)  # puts the result columns on their own row
+            add_result(embed, self.bet, self.payout, balance(self.store, self.member.guild.id, self.member.id))
+        else:
+            embed.set_footer(text=f"Bet: {self.bet:,} aura")
         return embed
 
     def finish(self) -> None:
@@ -269,7 +269,8 @@ class Blackjack(discord.ui.View):
         payout, what = blackjack_payout(self.player, self.dealer, self.bet)
         pay(self.store, self.member, payout, "blackjack")
         self.finished = True
-        self.result = f"{what}: {result_line(self.store, self.member, self.bet, payout)}"
+        self.payout = payout
+        self.result = what
         self.stop()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -352,6 +353,7 @@ class HigherLower(discord.ui.View):
         self.streak = 0
         self.log = ""
         self.finished = False
+        self.payout = 0
         self.message: discord.Message | None = None
         self.refresh()
 
@@ -366,34 +368,37 @@ class HigherLower(discord.ui.View):
         self.cash_out.label = f"Cash out ({self.pot:,})"
 
     def embed(self) -> discord.Embed:
-        embed = discord.Embed(title=f"🔼🔽 Higher or lower: {self.member.display_name} bet {fmt(self.bet)}", color=0x16A085)
-        embed.add_field(name="Card", value=f"`{card_name(self.card)}`", inline=True)
+        title = "🔼🔽 Higher or lower"
+        if self.finished:
+            embed = card(self.member, title, f"## `{card_name(self.card)}`\n{self.log}")
+            return add_result(embed, self.bet, self.payout, balance(self.store, self.member.guild.id, self.member.id))
+        last = f"\n{self.log}" if self.log else ""
+        embed = card(self.member, title, f"## `{card_name(self.card)}`{last}", color=PLAYING)
         embed.add_field(name="Streak", value=str(self.streak), inline=True)
-        embed.add_field(name="Pot", value=f"{fmt(self.pot)} ({self.multiplier:.2f}x)", inline=True)
-        if self.log:
-            embed.add_field(name="Last", value=self.log, inline=False)
-        if not self.finished:
-            embed.set_footer(text="Guess whether the next card is higher or lower. Same card = free redo.")
+        embed.add_field(name="Multiplier", value=f"{self.multiplier:.2f}x", inline=True)
+        embed.add_field(name="Pot", value=f"{self.pot:,} aura", inline=True)
+        embed.set_footer(text="Guess the next card. Same card means guess again.")
         return embed
 
     def end(self, payout: int, what: str) -> None:
         pay(self.store, self.member, payout, "higherlower")
         self.finished = True
-        self.log = f"{what}: {result_line(self.store, self.member, self.bet, payout)}"
+        self.payout = payout
+        self.log = what
         self.stop()
 
     async def guess(self, interaction: discord.Interaction, guess: str) -> None:
         old, new = self.card, random.randint(1, 13)
         self.card = new
         if new == old:
-            self.log = f"`{card_name(old)}` → `{card_name(new)}`: same card, guess again"
+            self.log = f"`{card_name(old)}` → `{card_name(new)}` · Same card, guess again"
         elif (new > old) == (guess == "higher"):
             self.multiplier *= HOUSE_EDGE / higher_lower_odds(old, guess)
             self.streak += 1
-            self.log = f"`{card_name(old)}` → `{card_name(new)}`: correct"
+            self.log = f"`{card_name(old)}` → `{card_name(new)}` · **Correct**"
         else:
             self.multiplier = 0
-            self.end(0, f"`{card_name(old)}` → `{card_name(new)}`: wrong")
+            self.end(0, f"`{card_name(old)}` → `{card_name(new)}` · **Wrong**")
         if not self.finished:
             self.refresh()
         await interaction.response.edit_message(embed=self.embed(), view=None if self.finished else self)
@@ -414,12 +419,12 @@ class HigherLower(discord.ui.View):
 
     @discord.ui.button(label="Cash out", style=discord.ButtonStyle.success)
     async def cash_out(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.end(self.pot, "cashed out")
+        self.end(self.pot, "**Cashed out**")
         await interaction.response.edit_message(embed=self.embed(), view=None)
 
     async def on_timeout(self) -> None:
         if not self.finished:
-            self.end(self.pot, "timed out, cashed out")
+            self.end(self.pot, "**Ran out of time, so it cashed out**")
             if self.message:
                 try:
                     await self.message.edit(embed=self.embed(), view=None)
@@ -461,7 +466,7 @@ class Duel(discord.ui.View):
         welcome(store, self.target)
         guild_id = self.target.guild.id
         if balance(store, guild_id, self.challenger.id) < bet:
-            await interaction.response.edit_message(content=f"{self.challenger.display_name} can't cover the bet anymore. Duel off.", view=None)
+            await interaction.response.edit_message(content=None, embed=discord.Embed(title="⚔️ Duel off", description=f"{self.challenger.display_name} can't cover the bet anymore."), view=None)
             self.stop()
             return
         if not store.spend_aura(guild_id, self.target.id, self.target.display_name, bet, "duel", "bet"):
@@ -471,19 +476,21 @@ class Duel(discord.ui.View):
         winner, loser = random.sample([self.challenger, self.target], 2)
         pay(store, winner, bet * 2, "duel", f"beat {loser.display_name}")
         self.stop()
-        await interaction.response.edit_message(
-            content=f"⚔️ **{winner.display_name}** beat {loser.display_name} and takes **{fmt(bet * 2)}**.", view=None,
-        )
+        embed = card(winner, "⚔️ Duel", f"## {winner.display_name} wins\nBeat **{loser.display_name}** and took the pot.", color=WIN)
+        embed.add_field(name="Pot", value=fmt(bet * 2), inline=True)
+        embed.add_field(name=f"{winner.display_name}", value=fmt(balance(store, guild_id, winner.id)), inline=True)
+        embed.add_field(name=f"{loser.display_name}", value=fmt(balance(store, guild_id, loser.id)), inline=True)
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
 
     @discord.ui.button(label="Decline", style=discord.ButtonStyle.secondary)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.stop()
-        await interaction.response.edit_message(content=f"{self.target.display_name} declined the duel.", view=None)
+        await interaction.response.edit_message(content=None, embed=discord.Embed(title="⚔️ Duel declined", description=f"{self.target.display_name} didn't want it."), view=None)
 
     async def on_timeout(self) -> None:
         if self.message:
             try:
-                await self.message.edit(content=f"{self.target.display_name} didn't answer. Duel off.", view=None)
+                await self.message.edit(content=None, embed=discord.Embed(title="⚔️ Duel off", description=f"{self.target.display_name} didn't answer."), view=None)
             except discord.HTTPException:
                 pass
 
@@ -505,10 +512,12 @@ async def duel_cmd(interaction: discord.Interaction, user: discord.Member, bet: 
         await interaction.response.send_message(problem, ephemeral=True)
         return
     view = Duel(member, user, amount, store)
+    embed = card(member, "⚔️ Duel challenge", f"**{member.display_name}** wants to duel **{user.display_name}**. Winner takes all.", color=PLAYING)
+    embed.add_field(name="Bet each", value=fmt(amount), inline=True)
+    embed.add_field(name="Pot", value=fmt(amount * 2), inline=True)
+    embed.set_footer(text=f"{user.display_name} has 60 seconds to answer")
     await interaction.response.send_message(
-        f"⚔️ {member.mention} challenges {user.mention} to a duel for **{fmt(amount)}** each. Winner takes all. "
-        f"{user.display_name}, you have 60 seconds.",
-        view=view, allowed_mentions=discord.AllowedMentions(users=[user]),
+        user.mention, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=[user]),
     )
     view.message = await interaction.original_response()
 
@@ -531,9 +540,10 @@ async def give_cmd(interaction: discord.Interaction, user: discord.Member, amoun
         return
     store.spend_aura(member.guild.id, member.id, member.display_name, value, "gift", f"gave to {user.display_name}")
     store.add_aura(member.guild.id, user.id, user.display_name, value, "gift", f"from {member.display_name}")
-    await interaction.response.send_message(
-        f"🎁 {member.display_name} gave {user.mention} **{fmt(value)}**.", allowed_mentions=discord.AllowedMentions(users=[user]),
-    )
+    embed = card(member, "🎁 Aura sent", f"**{member.display_name}** gave **{user.display_name}** {fmt(value)}.", color=WIN)
+    embed.add_field(name=member.display_name, value=fmt(balance(store, member.guild.id, member.id)), inline=True)
+    embed.add_field(name=user.display_name, value=fmt(balance(store, member.guild.id, user.id)), inline=True)
+    await interaction.response.send_message(user.mention, embed=embed, allowed_mentions=discord.AllowedMentions(users=[user]))
 
 
 COMMANDS = [coinflip_cmd, slots_cmd, roulette_cmd, blackjack_cmd, higherlower_cmd, duel_cmd, give_cmd]
