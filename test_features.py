@@ -192,20 +192,23 @@ class DebateTests(unittest.TestCase):
     def test_tally(self):
         self.assertEqual(debate.tally({1: "for", 2: "for", 3: "against"}), {"for": 2, "against": 1})
 
-    def test_adjudicate_is_neutral_and_reply_keeps_the_voice(self):
+    def test_adjudicate_is_formal(self):
         answer = json.dumps({
             "winner": "against", "verdict": "Against wins 😭 because they answered every point.",
             "reasoning": "For never answered the cost argument.", "best_speaker": "Kim Jong-Un",
-            "reply": "Against cooked them.",
+            "facts": ["Homework is assigned in most schools."],
         })
         judge = StubJudge(answer)
         ruling = asyncio.run(judge.adjudicate("ban homework", [("Opening", "For", "luke", "homework bad")], "persona"))
         self.assertEqual(ruling.winner, "against")
         self.assertNotIn("😭", ruling.verdict)
         self.assertEqual(ruling.best_speaker, "Kim John-Un")
-        self.assertEqual(ruling.reply, "against cooked them")
+        self.assertEqual(ruling.facts, ["Homework is assigned in most schools."])
+        self.assertEqual(ruling.sources, [], "no search, no sources")
         system, turns = judge.requests[0]
         self.assertIn("impartial adjudicator", system)
+        self.assertIn("formal", system)
+        self.assertNotIn("persona", system)
         self.assertIn('<speech round="Opening" side="For" speaker="luke">', turns[0][1])
 
     def test_bad_ruling_gives_none(self):
@@ -213,6 +216,140 @@ class DebateTests(unittest.TestCase):
 
     def test_prompt_judges_the_debate_not_the_motion(self):
         self.assertIn("Your own view of the motion doesn't matter", DEBATE_PROMPT)
+
+
+class SearchingJudge(StubJudge):
+    can_search = True
+
+    def __init__(self, searched, plain=None):
+        super().__init__(plain or "{}")
+        self.searched = searched
+
+    async def search(self, system, prompt, max_tokens):
+        return self.searched, [("NASA", "https://nasa.gov/wall")]
+
+
+FACT = {"rating": "false", "claim": "The Great Wall is visible from space.", "summary": "It is not visible to the naked eye.",
+        "explanation": "Astronauts report it can't be seen 😭.", "correction": "It is too narrow to see from orbit."}
+
+
+class FactCheckTests(unittest.TestCase):
+    def test_search_answer_keeps_its_sources_even_with_prose_around_the_json(self):
+        judge = SearchingJudge("Here is my answer:\n```json\n" + json.dumps(FACT) + "\n```")
+        check = asyncio.run(judge.factcheck("great wall visible from space", [("luke", "trust")], "luke"))
+        self.assertEqual(check.rating, "false")
+        self.assertEqual(check.sources, [("NASA", "https://nasa.gov/wall")])
+        self.assertNotIn("😭", check.explanation)
+        self.assertEqual(judge.requests, [], "no second call needed")
+
+    def test_falls_back_to_plain_answer_without_sources(self):
+        judge = SearchingJudge("I could not find anything", plain=json.dumps(dict(FACT, rating="Mostly True")))
+        check = asyncio.run(judge.factcheck("claim"))
+        self.assertEqual((check.rating, check.sources), ("mostly_true", []))
+
+    def test_unknown_rating_becomes_unverifiable(self):
+        check = asyncio.run(StubJudge(json.dumps(dict(FACT, rating="kinda"))).factcheck("claim"))
+        self.assertEqual(check.rating, "unverifiable")
+
+    def test_grounding_sources(self):
+        from judge import grounding_sources
+        web = lambda uri, title: SimpleNamespace(web=SimpleNamespace(uri=uri, title=title))
+        response = SimpleNamespace(candidates=[SimpleNamespace(grounding_metadata=SimpleNamespace(
+            grounding_chunks=[web("https://a", "A"), web("https://a", "A"), web("https://b", None)]))])
+        self.assertEqual(grounding_sources(response), [("A", "https://a"), ("https://b", "https://b")])
+        self.assertEqual(grounding_sources(SimpleNamespace(candidates=None)), [])
+
+
+class CasinoTests(unittest.TestCase):
+    def test_parse_bet(self):
+        from casino import parse_bet
+        self.assertEqual(parse_bet("all", 500), 500)
+        self.assertEqual(parse_bet("half", 501), 250)
+        self.assertEqual(parse_bet("1k", 5000), 1000)
+        self.assertEqual(parse_bet("2.5k", 5000), 2500)
+        self.assertEqual(parse_bet("1,200", 5000), 1200)
+        self.assertIn("only have", parse_bet("600", 500))
+        self.assertIn("broke", parse_bet("10", -100))
+        self.assertIn("number", parse_bet("lots", 500))
+        self.assertIn("at least", parse_bet("0", 500))
+
+    def test_slots(self):
+        from casino import slot_payout
+        self.assertEqual(slot_payout(["🍑", "🍑", "🍑"], 100), (2500, "JACKPOT"))
+        self.assertEqual(slot_payout(["💎", "💎", "💎"], 100)[0], 1000)
+        self.assertEqual(slot_payout(["💎", "🍒", "💎"], 100)[0], 150)
+        self.assertEqual(slot_payout(["💎", "🍒", "🍋"], 100)[0], 0)
+
+    def test_roulette(self):
+        from casino import roulette_payout
+        self.assertEqual(roulette_payout("red", 1, 100), 200)
+        self.assertEqual(roulette_payout("black", 1, 100), 0)
+        self.assertEqual(roulette_payout("even", 0, 100), 0, "zero isn't even")
+        self.assertEqual(roulette_payout("17", 17, 10), 360)
+        self.assertEqual(roulette_payout("green", 0, 10), 360)
+        self.assertIsNone(roulette_payout("purple", 3, 10))
+        self.assertIsNone(roulette_payout("37", 3, 10))
+
+    def test_blackjack(self):
+        from casino import blackjack_payout, hand_value
+        self.assertEqual(hand_value([("A", "♠"), ("K", "♥")]), 21)
+        self.assertEqual(hand_value([("A", "♠"), ("A", "♥"), ("9", "♦")]), 21)
+        self.assertEqual(hand_value([("10", "♠"), ("9", "♥"), ("5", "♦")]), 24)
+        natural, nineteen = [("A", "♠"), ("K", "♥")], [("10", "♠"), ("9", "♥")]
+        self.assertEqual(blackjack_payout(natural, nineteen, 100), (250, "blackjack!"))
+        self.assertEqual(blackjack_payout(nineteen, nineteen, 100), (100, "push"))
+        self.assertEqual(blackjack_payout(nineteen, [("10", "♠"), ("8", "♥")], 100)[0], 200)
+        self.assertEqual(blackjack_payout([("10", "♠"), ("9", "♥"), ("5", "♦")], nineteen, 100)[0], 0)
+        self.assertEqual(blackjack_payout(nineteen, [("10", "♠"), ("6", "♥"), ("9", "♦")], 100)[1], "dealer busts")
+
+    def test_higher_lower_odds(self):
+        from casino import higher_lower_odds
+        self.assertEqual(higher_lower_odds(1, "higher"), 1)
+        self.assertEqual(higher_lower_odds(13, "higher"), 0)
+        self.assertAlmostEqual(higher_lower_odds(7, "lower"), 0.5)
+
+    def test_spending_and_welcome(self):
+        from casino import START_AURA, welcome
+        store = temp_store()
+        person = SimpleNamespace(id=5, display_name="ben", guild=SimpleNamespace(id=1))
+        self.assertEqual(welcome(store, person), START_AURA)
+        self.assertEqual(welcome(store, person), 0, "only once")
+        self.assertFalse(store.spend_aura(1, 5, "ben", START_AURA + 1, "slots"))
+        self.assertTrue(store.spend_aura(1, 5, "ben", 100, "slots"))
+        store.add_aura(1, 5, "ben", 300, "slots", "win")
+        self.assertEqual(store.game_net(1, 5), 200)
+        self.assertEqual(store.aura_total(1, 5), START_AURA + 200)
+        self.assertEqual([row["kind"] for row in store.aura_history(1, 5)], ["gift"], "games stay out of the history")
+        self.assertEqual(store.last_aura(1, 5), 0, "casino doesn't trigger the message cooldown")
+
+    def test_items(self):
+        store = temp_store()
+        self.assertFalse(store.use_item(1, 5, "shutup"))
+        store.add_item(1, 5, "shutup")
+        store.add_item(1, 5, "shutup")
+        self.assertEqual(store.items(1, 5), {"shutup": 2})
+        self.assertTrue(store.use_item(1, 5, "shutup"))
+        self.assertEqual(store.items(1, 5), {"shutup": 1})
+
+
+class ShopTests(unittest.TestCase):
+    def test_clean_text_drops_pings_and_links(self):
+        from shop import clean_text
+        self.assertEqual(clean_text("hi @everyone <@123> https://x.co/y  there", 60), "hi there")
+        self.assertEqual(len(clean_text("a" * 100, 32)), 32)
+
+    def test_shield_and_status_override(self):
+        from shop import shield_until, status_override
+        store = temp_store()
+        self.assertEqual(shield_until(store, 1, 5), 0)
+        store.set_state("shield:1:5", str(time.time() + 60))
+        self.assertGreater(shield_until(store, 1, 5), time.time())
+        self.assertIsNone(status_override(store))
+        store.set_state("status_override", json.dumps({"text": "ben owes me money", "until": time.time() + 60}))
+        self.assertEqual(status_override(store), "ben owes me money")
+        store.set_state("status_override", json.dumps({"text": "old", "until": time.time() - 1}))
+        self.assertIsNone(status_override(store))
+        self.assertEqual(set(store.states("shield:")), {"shield:1:5"})
 
 
 if __name__ == "__main__":

@@ -17,7 +17,10 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 import aura
+import casino
 import debate
+import factcheck
+import shop
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
@@ -233,13 +236,16 @@ class SpamGuard(discord.Client):
         self._dashboard = None
         self._status_task: asyncio.Task | None = None
         self.grass = GrassWatcher(self)
+        self.last_factcheck: dict[int, float] = {}  # user id -> monotonic time of their last fact-check
+        self._shop_task: asyncio.Task | None = None
 
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
         for command in (
             spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
-            debate.debate_commands, grass_cmd,
+            debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
+            *casino.COMMANDS, *shop.COMMANDS,
         ):
             self.tree.add_command(command)
         if GUILD_ID:
@@ -283,6 +289,8 @@ class SpamGuard(discord.Client):
         if STATUSES and not self._status_task:  # on_ready runs again after reconnects
             self._status_task = asyncio.create_task(self.rotate_statuses())
         self.grass.start()
+        if not self._shop_task:
+            self._shop_task = asyncio.create_task(shop.undo_expired(self))
 
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
         self.grass.on_presence_update(after)
@@ -292,7 +300,9 @@ class SpamGuard(discord.Client):
         index = 0
         while True:
             try:
-                await self.change_presence(activity=make_status(STATUSES[index % len(STATUSES)]))
+                bought = shop.status_override(self.store)  # someone paid aura for the bot's status
+                activity = discord.CustomActivity(name=bought) if bought else make_status(STATUSES[index % len(STATUSES)])
+                await self.change_presence(activity=activity)
             except Exception:
                 log.exception("Couldn't change the bot's status")
             index += 1
@@ -652,41 +662,60 @@ def shutup_blocker(author: discord.Member, target: discord.Member) -> str | None
     return None
 
 
-@app_commands.command(name="shutup", description=f"Time someone out for {SHUTUP_SECONDS} seconds ({SHUTUP_PER_WEEK} uses per week)")
-@app_commands.describe(user="Who needs to shut up")
+@app_commands.command(name="shutup", description=f"Time someone out for {SHUTUP_SECONDS} seconds ({SHUTUP_PER_WEEK} uses per week, more in /shop)")
+@app_commands.describe(user="Who needs to shut up", long="Use a 1-minute /shutup you bought in /shop")
 @app_commands.guild_only()
-async def shutup_cmd(interaction: discord.Interaction, user: discord.Member) -> None:
+async def shutup_cmd(interaction: discord.Interaction, user: discord.Member, long: bool = False) -> None:
     bot: SpamGuard = interaction.client
-    author = interaction.user
+    store, author, guild_id = bot.store, interaction.user, interaction.guild_id
     now = time.time()
-    used = bot.store.shutups_used(interaction.guild_id, author.id, now, SHUTUP_WINDOW)
-    if len(used) >= SHUTUP_PER_WEEK:
+    used = store.shutups_used(guild_id, author.id, now, SHUTUP_WINDOW)
+    owned = store.items(guild_id, author.id)
+    weekly_left = SHUTUP_PER_WEEK - len(used)
+    if long and not owned.get("longshutup"):
+        await interaction.response.send_message("You don't have a 1-minute /shutup. Buy one with `/buy longshutup`.", ephemeral=True)
+        return
+    if not long and weekly_left <= 0 and not owned.get("shutup"):
         await interaction.response.send_message(
-            f"You've used all {SHUTUP_PER_WEEK} of your /shutups this week. "
-            f"Your next one comes back <t:{int(used[0] + SHUTUP_WINDOW)}:R>.",
+            f"You've used all {SHUTUP_PER_WEEK} of your /shutups this week. Your next one comes back "
+            f"<t:{int(used[0] + SHUTUP_WINDOW)}:R>, or buy one with `/buy shutup`.",
             ephemeral=True,
         )
         return
     if problem := shutup_blocker(author, user):
         await interaction.response.send_message(problem, ephemeral=True)
         return
+    if (shielded := shop.shield_until(store, guild_id, user.id)) > now:
+        await interaction.response.send_message(
+            f"🛡️ {user.display_name} has a shutup shield until <t:{int(shielded)}:t>.", ephemeral=True,
+        )
+        return
 
+    seconds = shop.LONG_SHUTUP_SECONDS if long else SHUTUP_SECONDS
     reason = f"/shutup from {author}"
     try:
-        await user.timeout(timedelta(seconds=SHUTUP_SECONDS), reason=reason)
+        await user.timeout(timedelta(seconds=seconds), reason=reason)
     except discord.Forbidden:
         await interaction.response.send_message(f"I don't have permission to time out {user.mention}.", ephemeral=True)
         return
-    bot.store.record_shutup(interaction.guild_id, author.id, user.id, now)
-    bot.store.record(
-        guild_id=interaction.guild_id, user_id=user.id, user_name=str(user),
-        channel_name=getattr(interaction.channel, "name", None), action="timeout", duration_seconds=SHUTUP_SECONDS,
+    # Use the weekly ones first, then bought ones.
+    if long:
+        store.use_item(guild_id, author.id, "longshutup")
+    elif weekly_left > 0:
+        store.record_shutup(guild_id, author.id, user.id, now)
+        weekly_left -= 1
+    else:
+        store.use_item(guild_id, author.id, "shutup")
+    store.record(
+        guild_id=guild_id, user_id=user.id, user_name=str(user),
+        channel_name=getattr(interaction.channel, "name", None), action="timeout", duration_seconds=seconds,
         offense=0, category="shutup", reason=reason,
     )
-    left = SHUTUP_PER_WEEK - len(used) - 1
+    bought = store.items(guild_id, author.id).get("shutup", 0)
+    extra = f" + {bought} bought" if bought else ""
     await interaction.response.send_message(
-        f"🤫 {author.mention} told {user.mention} to shut up. Timed out for {format_duration(SHUTUP_SECONDS)}. "
-        f"({author.display_name} has {left} /shutup{'' if left == 1 else 's'} left this week)"
+        f"🤫 {author.mention} told {user.mention} to shut up. Timed out for {format_duration(seconds)}. "
+        f"({author.display_name} has {weekly_left} /shutup{'' if weekly_left == 1 else 's'} left this week{extra})"
     )
 
 
@@ -739,6 +768,8 @@ async def settle_cmd(
     embed.add_field(name="Why", value=(ruling.reasoning or "–")[:1024], inline=False)
     if ruling.facts:
         embed.add_field(name="Facts", value="\n".join(f"• {fact}" for fact in ruling.facts[:4])[:1024], inline=False)
+    if ruling.sources:
+        embed.add_field(name="Sources", value=debate.source_list(ruling.sources), inline=False)
     embed.set_footer(text=f"Read the last {len(transcript)} messages · {bot.settler.last_model} · AI can be wrong")
     said = f"> {comment[:300]}\n" if comment else ""
     await interaction.followup.send(

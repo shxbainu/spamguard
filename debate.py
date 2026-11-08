@@ -4,7 +4,8 @@
 2. Whoever started it presses Start. The bot opens a thread and calls speakers one at a time, alternating sides.
    Only the person speaking can type in the thread; everyone else's messages are removed until it's their turn.
 3. After the last speech everyone else votes for a minute, then the AI judge (the impartial /settleargument one)
-   picks the winning side, explains why and names the best speaker. Winners get aura.
+   writes a formal decision: the winning side, the reasoning, facts it checked (with web sources when it can
+   search) and the best speaker. Winners get aura.
 """
 from __future__ import annotations
 
@@ -26,6 +27,18 @@ WARNING_SECONDS = 30
 # Debates running right now, by the channel they were started in and by their thread.
 by_channel: dict[int, "Debate"] = {}
 by_thread: dict[int, "Debate"] = {}
+
+
+def source_list(sources: list[tuple[str, str]]) -> str:
+    """Numbered markdown links that fit in one embed field."""
+    lines, size = [], 0
+    for number, (title, url) in enumerate(sources, 1):
+        line = f"{number}. [{title[:80]}]({url})"
+        if size + len(line) + 1 > 1024:
+            break
+        lines.append(line)
+        size += len(line) + 1
+    return "\n".join(lines) or "–"
 
 
 def is_mod(member: discord.Member) -> bool:
@@ -297,15 +310,18 @@ async def announce(bot, debate: Debate) -> None:
     else:
         winner = ruling.winner
         embed = discord.Embed(title=f"🏛️ Result: {debate.motion}"[:256], description=f"**{ruling.verdict}**"[:4096], color=0xE67E22)
-        embed.add_field(name="Why", value=(ruling.reasoning or "–")[:1024], inline=False)
+        embed.add_field(name="Reasoning", value=(ruling.reasoning or "–")[:1024], inline=False)
+        if ruling.facts:
+            embed.add_field(name="Facts checked", value="\n".join(f"• {fact}" for fact in ruling.facts)[:1024], inline=False)
+        if ruling.sources:
+            embed.add_field(name="Sources", value=source_list(ruling.sources), inline=False)
         embed.add_field(name="Best speaker", value=(ruling.best_speaker or "–")[:1024], inline=True)
-        embed.set_footer(text=f"Judged by {judge.last_model} · AI can be wrong")
+        embed.set_footer(text=f"Adjudicated by {judge.last_model} · AI can make mistakes")
     winners = debate.sides.get(winner, [])
     title = f"{SIDES[winner]} wins ({', '.join(m.display_name for m in winners)})" if winners else "It's a draw"
     embed.insert_field_at(0, name="Winner", value=title[:1024], inline=False)
     embed.add_field(name="Audience vote", value=vote_line, inline=True)
-    reply = ruling.reply if ruling else ""
-    await debate.thread.send(reply or None, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    await debate.thread.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
     if debate.message:
         try:
             await debate.message.edit(content=f"Debate over: **{title}**", view=None)

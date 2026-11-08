@@ -23,7 +23,8 @@ AURA_COOLDOWN_MINUTES = int(os.getenv("AURA_COOLDOWN_MINUTES") or 10)
 POINTS = {"comeback": 100, "callout": 50, "called_out": -50, "false_claim": -100, "debate": 100}
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "debate": "won a debate",
+    "false_claim": "said something false", "debate": "won a debate", "daily": "daily", "gift": "gift",
+    "shop": "shop",
 }
 # What the bot is reacting to, for the one-liner it writes.
 SITUATIONS = {
@@ -123,6 +124,18 @@ async def check_cmd(interaction: discord.Interaction, user: Optional[discord.Mem
         lines.append(f"`{aura_text(row['points']):>10}` {WHAT.get(row['kind'], row['kind'])}{why} <t:{int(row['created_at'])}:R>")
     if len(lines) == 1:
         lines.append("Nothing yet.")
+    extras = []
+    net = store.game_net(interaction.guild_id, user.id)
+    if net:
+        extras.append(f"casino: {'+' if net > 0 else ''}{net:,}")
+    owned = store.items(interaction.guild_id, user.id)
+    if owned:
+        extras.append("items: " + ", ".join(f"{count}x {item}" for item, count in owned.items()))
+    from shop import shield_until
+    if (until := shield_until(store, interaction.guild_id, user.id)) > time.time():
+        extras.append(f"🛡️ shielded until <t:{int(until)}:t>")
+    if extras:
+        lines.append(" · ".join(extras))
     await interaction.response.send_message("\n".join(lines)[:2000], allowed_mentions=discord.AllowedMentions.none())
 
 

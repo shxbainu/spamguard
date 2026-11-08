@@ -193,6 +193,13 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/debate start motion [minutes] [rounds]` | Starts a debate; people pick For or Against with buttons, then the starter presses Start. |
 | `/debate stop` | Ends the debate (whoever started it, or a mod). |
 | `/grass` | How long the grass-check person has been on Discord and gaming today. |
+| Right-click a message → **Apps → Fact check**, or `/factcheck claim` | A formal fact-check with a rating and web sources. |
+| `/daily` | Free aura once a day (more for days in a row). |
+| `/coinflip` `/slots` `/roulette` `/blackjack` `/higherlower` | Casino games; bet aura. |
+| `/duel @user bet` | You both bet the same aura; winner takes all. |
+| `/give @user amount` | Give someone aura. |
+| `/shop` / `/buy item` | Spend aura: extra or 1-minute /shutups, a shutup shield, renaming someone, a roast, the bot's status. |
+| `/shutup @user long:True` | Uses a 1-minute /shutup you bought. Bought regular ones are used automatically after your weekly 3. |
 
 ### Quote book
 
@@ -211,12 +218,44 @@ The moderation check already reads each message, so it also spots standout momen
 
 Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated. Turn it off with `AURA_ENABLED=false`.
 
+### Fact check
+
+Right-click a message → **Apps → Fact check** (or `/factcheck claim:"..."`). It's written like a published fact-check: the claim, a rating (true, mostly true, misleading, false, unverifiable, or opinion), the evidence, a correction if needed, and **sources**. When the `/settleargument` AI list includes Gemini, it searches Google first and links the pages it used; otherwise it says it's going off the AI's own knowledge. Each message can only be checked once, and each person can check once every 30 seconds. A message rated **false** costs its author 100 aura and gives the person who checked it 50.
+
+The same web search backs `/settleargument` facts and debate decisions, which also list their sources.
+
+### Casino and shop
+
+Aura is the currency. Everyone gets 500 the first time they use the casino (`CASINO_START_AURA`), plus `/daily`: 100, and 20 more for each day in a row up to 200 (`DAILY_AURA`). Bets can be a number, `1k`, `half` or `all`; you can't bet aura you don't have, so negative aura means you're broke until you earn some.
+
+| Game | How it pays |
+|---|---|
+| `/coinflip bet call` | Call it right: 2x |
+| `/slots bet` | Pair 1.5x, three of a kind 10x, three 🍑 25x |
+| `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
+| `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
+| `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot (riskier guesses grow it more), cash out any time, one wrong guess loses it |
+| `/duel @user bet` | Both bet the same; 50/50, winner takes both |
+
+Shop (`/shop` to see it, `/buy` to spend):
+
+| Item | Price | Does |
+|---|---|---|
+| `shutup` | 250 | One more /shutup after your weekly 3 |
+| `longshutup` | 600 | A 1-minute /shutup (`/shutup @user long:True`) |
+| `shield` | 400 | Nobody can /shutup you for 24 hours |
+| `nickname` | 500 | Rename someone for an hour (`/buy nickname user text`); needs the bot to have **Manage Nicknames** |
+| `roast` | 150 | The bot roasts someone (`/buy roast user`) |
+| `status` | 750 | Set the bot's status for an hour (`/buy status text`) |
+
+Set `CASINO_CHANNEL_ID` to keep the games in one channel. `/aura check` shows someone's casino winnings or losses, items and shield; the casino doesn't fill up their aura history.
+
 ### Debates
 
 1. `/debate start motion:"This house would ban homework"`. Optional: `minutes` per speech (1–5, default 2) and `rounds` (1 = one speech each, 2 = opening + closing, 3 = opening + rebuttal + closing).
 2. People click **Join For** or **Join Against**; whoever started it clicks **Start**.
 3. The bot opens a thread and calls speakers in turn, alternating sides (sides with several people take turns). The speaker types their argument and clicks **Done**, or the timer runs out (with a 30-second warning). Only the speaker can type during a speech; anyone else's message is removed.
-4. Everyone except the debaters gets 60 seconds to vote, then the AI judge (the impartial `/settleargument` model) picks the winning side, explains why and names the best speaker. The audience vote is shown next to it. Winners get +100 aura.
+4. Everyone except the debaters gets 60 seconds to vote, then the AI judge (the impartial `/settleargument` model) writes a formal decision: the winning side, the reasoning, facts it checked (with web sources when Gemini is available) and the best speaker. The audience vote is shown next to it. Winners get +100 aura.
 
 Debates live in memory, so restarting the bot ends one that's running.
 

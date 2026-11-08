@@ -92,7 +92,19 @@ CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS inventory (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    item TEXT NOT NULL,              -- shop items bought with aura, e.g. shutup or longshutup
+    count INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id, item)
+);
 """
+
+# Aura kinds from the casino; /aura check leaves them out of someone's recent history so it shows what they did.
+GAME_KINDS = ("coinflip", "slots", "blackjack", "higherlower", "roulette", "duel")
+# Kinds earned from a message (the per-person cooldown only looks at these).
+MESSAGE_KINDS = ("comeback", "callout", "false_claim")
 
 EVENT_FIELDS = (
     "guild_id", "kind", "user_id", "user_name", "channel_name", "content", "verdict", "reason", "model",
@@ -300,18 +312,36 @@ class Store:
         return row.fetchone()[0]
 
     def aura_history(self, guild_id: int, user_id: int, limit: int = 5) -> list[dict]:
+        """Recent aura changes, not counting casino games."""
         rows = self.db.execute(
-            "SELECT * FROM aura WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-            (guild_id, user_id, limit),
+            f"SELECT * FROM aura WHERE guild_id = ? AND user_id = ? AND kind NOT IN ({', '.join('?' * len(GAME_KINDS))}) "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (guild_id, user_id, *GAME_KINDS, limit),
         )
         return [dict(row) for row in rows]
 
     def last_aura(self, guild_id: int, user_id: int) -> float:
-        """When this member last gained or lost aura from a message (debates don't count), or 0."""
+        """When this member last gained or lost aura from one of their messages, or 0."""
         row = self.db.execute(
-            "SELECT MAX(created_at) FROM aura WHERE guild_id = ? AND user_id = ? AND kind != 'debate'", (guild_id, user_id),
+            f"SELECT MAX(created_at) FROM aura WHERE guild_id = ? AND user_id = ? AND kind IN ({', '.join('?' * len(MESSAGE_KINDS))})",
+            (guild_id, user_id, *MESSAGE_KINDS),
         ).fetchone()
         return row[0] or 0
+
+    def spend_aura(self, guild_id: int, user_id: int, user_name: str, amount: int, kind: str, reason: str | None = None) -> bool:
+        """Takes `amount` aura if they have that much; False (and nothing taken) if they don't."""
+        if amount <= 0 or self.aura_total(guild_id, user_id) < amount:
+            return False
+        self.add_aura(guild_id, user_id, user_name, -amount, kind, reason)
+        return True
+
+    def game_net(self, guild_id: int, user_id: int) -> int:
+        """Aura won (or lost, if negative) in the casino overall."""
+        row = self.db.execute(
+            f"SELECT COALESCE(SUM(points), 0) FROM aura WHERE guild_id = ? AND user_id = ? AND kind IN ({', '.join('?' * len(GAME_KINDS))})",
+            (guild_id, user_id, *GAME_KINDS),
+        )
+        return row.fetchone()[0]
 
     def aura_leaderboard(self, guild_id: int, limit: int = 10) -> list[dict]:
         rows = self.db.execute(
@@ -365,6 +395,37 @@ class Store:
     def set_state(self, key: str, value: str) -> None:
         self.db.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
         self.db.commit()
+
+    def delete_state(self, key: str) -> None:
+        self.db.execute("DELETE FROM state WHERE key = ?", (key,))
+        self.db.commit()
+
+    def states(self, prefix: str) -> dict[str, str]:
+        rows = self.db.execute("SELECT key, value FROM state WHERE key LIKE ?", (prefix.replace("%", "") + "%",))
+        return {row[0]: row[1] for row in rows}
+
+    # ---- shop items -------------------------------------------------------------
+
+    def items(self, guild_id: int, user_id: int) -> dict[str, int]:
+        rows = self.db.execute("SELECT item, count FROM inventory WHERE guild_id = ? AND user_id = ? AND count > 0", (guild_id, user_id))
+        return {row[0]: row[1] for row in rows}
+
+    def add_item(self, guild_id: int, user_id: int, item: str, count: int = 1) -> None:
+        self.db.execute(
+            "INSERT INTO inventory (guild_id, user_id, item, count) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (guild_id, user_id, item) DO UPDATE SET count = count + excluded.count",
+            (guild_id, user_id, item, count),
+        )
+        self.db.commit()
+
+    def use_item(self, guild_id: int, user_id: int, item: str) -> bool:
+        """Uses up one of an item; False if they don't have any."""
+        cursor = self.db.execute(
+            "UPDATE inventory SET count = count - 1 WHERE guild_id = ? AND user_id = ? AND item = ? AND count > 0",
+            (guild_id, user_id, item),
+        )
+        self.db.commit()
+        return cursor.rowcount > 0
 
     # ---- punishment history ------------------------------------------------
 
