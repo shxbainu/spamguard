@@ -4,3 +4,4 @@ google-genai>=1.47
 anthropic>=0.125
 openai>=2.0
 python-dotenv>=1.0
+tzdata>=2024.1

@@ -118,7 +118,7 @@ The dashboard is only reachable from the computer the bot runs on. To open it to
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications), click **New Application**, and name it.
 2. On **General Information**, copy the **Application ID**.
 3. Under **Bot**, click **Reset Token** and copy the token. Keep it secret.
-4. On the same page, under **Privileged Gateway Intents**, turn on **Server Members Intent** and **Message Content Intent**, then save.
+4. On the same page, under **Privileged Gateway Intents**, turn on **Presence Intent**, **Server Members Intent** and **Message Content Intent**, then save. (Presence is only for the grass check; without it the bot still starts, minus that.)
 
 ### 2. Invite it to your server
 
@@ -182,6 +182,49 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/settleargument [comment] [messages]` | The AI reads the last 50 messages in the channel (5–100 with `messages`), works out who's arguing what, and posts a verdict: who's right, why, and a few facts backing it up. Leave a `comment` ("tell Dave he's wrong") and it answers you directly, in its current personality. Once per channel every 30 seconds. |
 
 `/settleargument` uses the AI's own knowledge and doesn't search the web, so it can be wrong or out of date on recent events, and it says so when something is just opinion. The ruling itself (topic, verdict, reasoning, facts) is written as a neutral referee: no jokes, emojis or bias toward anyone the personality likes or dislikes, and the facts are real-world evidence, not a recap of the chat. Only the one-line reply above it is in the bot's personality. Tune the commands with `SHUTUP_PER_WEEK`, `SHUTUP_SECONDS` and `SETTLE_COOLDOWN_SECONDS` in `.env`.
+
+| Command | Does |
+|---|---|
+| Right-click a message → **Apps → Quote this** | Saves it to the quote book (not your own messages). |
+| `/quote random [user] [about]` | A random saved quote, optionally from one person or containing a word. |
+| `/quote show number` / `/quote delete number` | Show one by number, or remove it (the person quoted, whoever saved it, or a mod). |
+| `/aura check [user]` | Someone's aura and what they gained or lost it for. |
+| `/aura leaderboard` | Most to least aura. |
+| `/debate start motion [minutes] [rounds]` | Starts a debate; people pick For or Against with buttons, then the starter presses Start. |
+| `/debate stop` | Ends the debate (whoever started it, or a mod). |
+| `/grass` | How long the grass-check person has been on Discord and gaming today. |
+
+### Quote book
+
+Right-click any message → **Apps → Quote this**. When the bot chats with someone it knows up to 3 of their saved quotes, and now and then throws one back at them when it fits (like when they contradict it).
+
+### Aura
+
+The moderation check already reads each message, so it also spots standout moments. Most messages get nothing; the smarter second-opinion model (`AI_UNSURE_MODEL`) has to agree before anything is given. When it happens the bot replies with one short line in its voice and the points:
+
+| Moment | Aura |
+|---|---|
+| A genuinely good comeback | +100 |
+| Calling out something false | +50 (and the person called out gets −50) |
+| Saying something blatantly false | −100 |
+| Winning a `/debate` | +100 each |
+
+Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated. Turn it off with `AURA_ENABLED=false`.
+
+### Debates
+
+1. `/debate start motion:"This house would ban homework"`. Optional: `minutes` per speech (1–5, default 2) and `rounds` (1 = one speech each, 2 = opening + closing, 3 = opening + rebuttal + closing).
+2. People click **Join For** or **Join Against**; whoever started it clicks **Start**.
+3. The bot opens a thread and calls speakers in turn, alternating sides (sides with several people take turns). The speaker types their argument and clicks **Done**, or the timer runs out (with a 30-second warning). Only the speaker can type during a speech; anyone else's message is removed.
+4. Everyone except the debaters gets 60 seconds to vote, then the AI judge (the impartial `/settleargument` model) picks the winning side, explains why and names the best speaker. The audience vote is shown next to it. Winners get +100 aura.
+
+Debates live in memory, so restarting the bot ends one that's running.
+
+### Grass check
+
+Every day at `GRASS_TIME` (21:00, `GRASS_TIMEZONE` America/New_York) the bot posts in `GRASS_CHANNEL_ID` (default: the chat channel), pings `GRASS_USER` (default `destructorluke`), and shows how long they were on Discord that day, which games they played and for how long, and whether they're online now, with a line in the bot's voice. If they play one game for `GRASS_NAG_HOURS` (3) hours straight it says something once. `/grass` shows the same stats any time.
+
+"On Discord" counts time Discord shows them online, idle or do not disturb on any device, so it's Discord time, not phone screen time. Games only show if they share their activity (Discord settings → Activity Privacy). It needs **Presence Intent** turned on in the Developer Portal; set `GRASS_USER=` (empty) to turn it off, `GRASS_PING=false` to post without pinging.
 
 ### For mods
 

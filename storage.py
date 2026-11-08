@@ -1,5 +1,6 @@
-"""SQLite storage: punishment history, offense counts, /shutup uses, and a rolling log of what the bot saw and
-decided (checked messages, its replies and rulings) for the dashboard."""
+"""SQLite storage: punishment history, offense counts, /shutup uses, a rolling log of what the bot saw and
+decided (checked messages, its replies and rulings) for the dashboard, the quote book, aura points, and when the
+grass-check person was online or playing games."""
 from __future__ import annotations
 
 import sqlite3
@@ -51,6 +52,46 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT                      -- extra context: the first model's call, strike count, what was replied to
 );
 CREATE INDEX IF NOT EXISTS events_created ON events (created_at);
+CREATE TABLE IF NOT EXISTS quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,        -- when it was saved
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    said_at REAL NOT NULL,           -- when the message was sent
+    author_id INTEGER NOT NULL,
+    author_name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    has_image INTEGER NOT NULL DEFAULT 0,
+    saved_by_id INTEGER NOT NULL,
+    saved_by_name TEXT NOT NULL,
+    UNIQUE (guild_id, message_id)
+);
+CREATE TABLE IF NOT EXISTS aura (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    user_name TEXT NOT NULL,
+    points INTEGER NOT NULL,
+    kind TEXT NOT NULL,              -- comeback, callout, called_out, false_claim or debate
+    reason TEXT,
+    message TEXT
+);
+CREATE INDEX IF NOT EXISTS aura_user ON aura (guild_id, user_id);
+CREATE TABLE IF NOT EXISTS presence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,              -- online (any status but offline) or game
+    name TEXT,                       -- the game's name
+    started REAL NOT NULL,
+    ended REAL NOT NULL              -- kept up to date while it's still going
+);
+CREATE INDEX IF NOT EXISTS presence_user ON presence (user_id, ended);
+CREATE TABLE IF NOT EXISTS state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 EVENT_FIELDS = (
@@ -198,6 +239,132 @@ class Store:
             "by_model": [dict(row) for row in models],
             "kept_days": self.event_days,
         }
+
+    # ---- quote book ------------------------------------------------------------
+
+    def add_quote(self, **fields) -> int | None:
+        """Saves a quote and returns its number, or None if that message is already in the book."""
+        names = ["created_at", *fields]
+        try:
+            cursor = self.db.execute(
+                f"INSERT INTO quotes ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
+                [time.time(), *(int(v) if isinstance(v, bool) else v for v in fields.values())],
+            )
+        except sqlite3.IntegrityError:
+            return None
+        self.db.commit()
+        return cursor.lastrowid
+
+    def quote(self, guild_id: int, quote_id: int) -> dict | None:
+        row = self.db.execute("SELECT * FROM quotes WHERE guild_id = ? AND id = ?", (guild_id, quote_id)).fetchone()
+        return dict(row) if row else None
+
+    def random_quote(self, guild_id: int, author_id: int | None = None, about: str | None = None) -> dict | None:
+        query, args = "SELECT * FROM quotes WHERE guild_id = ?", [guild_id]
+        if author_id:
+            query += " AND author_id = ?"
+            args.append(author_id)
+        if about:
+            query += " AND content LIKE ?"
+            args.append(f"%{about}%")
+        row = self.db.execute(query + " ORDER BY RANDOM() LIMIT 1", args).fetchone()
+        return dict(row) if row else None
+
+    def quotes_by(self, guild_id: int, author_id: int, limit: int = 3) -> list[str]:
+        rows = self.db.execute(
+            "SELECT content FROM quotes WHERE guild_id = ? AND author_id = ? AND content != '' ORDER BY RANDOM() LIMIT ?",
+            (guild_id, author_id, limit),
+        )
+        return [row[0] for row in rows]
+
+    def count_quotes(self, guild_id: int) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM quotes WHERE guild_id = ?", (guild_id,)).fetchone()[0]
+
+    def delete_quote(self, guild_id: int, quote_id: int) -> None:
+        self.db.execute("DELETE FROM quotes WHERE guild_id = ? AND id = ?", (guild_id, quote_id))
+        self.db.commit()
+
+    # ---- aura -------------------------------------------------------------------
+
+    def add_aura(self, guild_id: int, user_id: int, user_name: str, points: int, kind: str,
+                 reason: str | None = None, message: str | None = None, now: float | None = None) -> None:
+        self.db.execute(
+            "INSERT INTO aura (created_at, guild_id, user_id, user_name, points, kind, reason, message) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (now or time.time(), guild_id, user_id, user_name, points, kind, reason, message),
+        )
+        self.db.commit()
+
+    def aura_total(self, guild_id: int, user_id: int) -> int:
+        row = self.db.execute("SELECT COALESCE(SUM(points), 0) FROM aura WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        return row.fetchone()[0]
+
+    def aura_history(self, guild_id: int, user_id: int, limit: int = 5) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM aura WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (guild_id, user_id, limit),
+        )
+        return [dict(row) for row in rows]
+
+    def last_aura(self, guild_id: int, user_id: int) -> float:
+        """When this member last gained or lost aura from a message (debates don't count), or 0."""
+        row = self.db.execute(
+            "SELECT MAX(created_at) FROM aura WHERE guild_id = ? AND user_id = ? AND kind != 'debate'", (guild_id, user_id),
+        ).fetchone()
+        return row[0] or 0
+
+    def aura_leaderboard(self, guild_id: int, limit: int = 10) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT user_id, (SELECT a2.user_name FROM aura a2 WHERE a2.guild_id = a.guild_id AND a2.user_id = a.user_id "
+            "ORDER BY a2.created_at DESC LIMIT 1) AS user_name, SUM(points) AS points "
+            "FROM aura a WHERE guild_id = ? GROUP BY user_id ORDER BY points DESC LIMIT ?",
+            (guild_id, limit),
+        )
+        return [dict(row) for row in rows]
+
+    # ---- online time and games (grass check) -----------------------------------
+
+    def start_presence(self, user_id: int, kind: str, name: str | None, now: float) -> int:
+        cursor = self.db.execute(
+            "INSERT INTO presence (user_id, kind, name, started, ended) VALUES (?, ?, ?, ?, ?)", (user_id, kind, name, now, now),
+        )
+        self.db.commit()
+        return cursor.lastrowid
+
+    def touch_presence(self, session_ids: list[int], now: float) -> None:
+        """Moves the end of sessions that are still going up to now (so a restart loses at most a few minutes)."""
+        if session_ids:
+            self.db.execute(
+                f"UPDATE presence SET ended = ? WHERE id IN ({', '.join('?' * len(session_ids))})", (now, *session_ids),
+            )
+            self.db.commit()
+
+    def presence_totals(self, user_id: int, since: float, until: float) -> dict:
+        """Seconds online and seconds per game between `since` and `until` (overlapping sessions are clipped)."""
+        rows = self.db.execute(
+            "SELECT kind, name, started, ended FROM presence WHERE user_id = ? AND ended > ? AND started < ?",
+            (user_id, since, until),
+        )
+        online, games = 0.0, {}
+        for row in rows:
+            seconds = max(0.0, min(row["ended"], until) - max(row["started"], since))
+            if row["kind"] == "online":
+                online += seconds
+            else:
+                games[row["name"]] = games.get(row["name"], 0.0) + seconds
+        return {"online": online, "games": dict(sorted(games.items(), key=lambda item: -item[1]))}
+
+    def prune_presence(self, now: float, days: float = 30) -> None:
+        self.db.execute("DELETE FROM presence WHERE ended < ?", (now - days * 86400,))
+        self.db.commit()
+
+    def get_state(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        self.db.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+        self.db.commit()
 
     # ---- punishment history ------------------------------------------------
 

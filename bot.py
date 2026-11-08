@@ -16,10 +16,14 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+import aura
+import debate
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
 from escalation import format_duration, parse_ladder, step_for
 from judge import API_KEYS, DEFAULT_MODELS, DEFAULT_PERSONA, Judge, SecondOpinion, fix_nicknames, make_judges
+from grass import GRASS_USER, GrassWatcher, grass_cmd
+from quotes import quote_commands, quote_menu
 from storage import Store
 
 load_dotenv()
@@ -185,11 +189,13 @@ def speaker(member: discord.abc.User) -> str:
 
 
 class SpamGuard(discord.Client):
-    def __init__(self) -> None:
+    def __init__(self, presences: bool = bool(GRASS_USER)) -> None:
         intents = discord.Intents.default()
         intents.message_content = True  # privileged: enable it in the Developer Portal
         intents.members = True  # privileged: needed to restore roles when a kicked user rejoins
+        intents.presences = presences  # privileged: lets the grass check see who's online and what they play
         super().__init__(intents=intents)
+        self.persona = PERSONA
         self.tree = app_commands.CommandTree(self)
         self.tree.error(self.on_app_command_error)
 
@@ -226,11 +232,15 @@ class SpamGuard(discord.Client):
         self._tasks: set[asyncio.Task] = set()
         self._dashboard = None
         self._status_task: asyncio.Task | None = None
+        self.grass = GrassWatcher(self)
 
     # ---- lifecycle ---------------------------------------------------------
 
     async def setup_hook(self) -> None:
-        for command in (spamguard_commands, shutup_cmd, settle_cmd):
+        for command in (
+            spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
+            debate.debate_commands, grass_cmd,
+        ):
             self.tree.add_command(command)
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
@@ -248,6 +258,7 @@ class SpamGuard(discord.Client):
     async def close(self) -> None:
         if self._status_task:
             self._status_task.cancel()
+        self.grass.stop()
         if self._dashboard:
             await self._dashboard.cleanup()
         await super().close()
@@ -271,6 +282,10 @@ class SpamGuard(discord.Client):
             log.info("Personality: %s", PERSONA if len(PERSONA) <= 100 else PERSONA[:100] + "…")
         if STATUSES and not self._status_task:  # on_ready runs again after reconnects
             self._status_task = asyncio.create_task(self.rotate_statuses())
+        self.grass.start()
+
+    async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
+        self.grass.on_presence_update(after)
 
     async def rotate_statuses(self) -> None:
         """Shows each of STATUSES in turn, changing every STATUS_MINUTES."""
@@ -326,6 +341,9 @@ class SpamGuard(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or not isinstance(message.author, discord.Member):
             return
+        if (running := debate.by_thread.get(message.channel.id)) is not None:
+            await debate.on_thread_message(running, message)  # debate threads have their own rules
+            return
         text = message.clean_content
         is_gif = looks_like_gif(
             text,
@@ -348,11 +366,16 @@ class SpamGuard(discord.Client):
         if (WATCH_CHANNEL_IDS and channel_id not in WATCH_CHANNEL_IDS) or channel_id in IGNORE_CHANNEL_IDS:
             return
         member = message.author
-        if self.is_exempt(member) or self.remaining_penalty(message.guild.id, member.id):
+        if self.remaining_penalty(message.guild.id, member.id):
+            return
+        now = time.monotonic()
+        if self.is_exempt(member):
+            # Mods can't be punished, but they can still gain or lose aura.
+            if aura.AURA_ENABLED and self.judge and not is_gif and len(text.strip()) >= AI_MIN_LENGTH and self.ai_budget.take(now):
+                self.spawn(self.check_contribution(message, context, text, exempt=True))
             return
 
         ref = MsgRef(channel_id, message.id)
-        now = time.monotonic()
 
         if is_gif and (refs := self.gifs.add(member.id, ref, now)):
             reason = f"GIF spam ({len(refs)} GIFs in under {GIF_WINDOW_SECONDS}s)"
@@ -406,7 +429,7 @@ class SpamGuard(discord.Client):
                 elsewhere = [(ch, said) for cid, ch, said in self.recent_replies if cid != message.channel.id][-8:]
                 text = await chatter.chat(
                     name, PERSONA, list(history)[-CHAT_CONTEXT_MESSAGES:], speaker(message.author),
-                    images=images, elsewhere=elsewhere,
+                    images=images, elsewhere=elsewhere, quotes=self.store.quotes_by(message.guild.id, message.author.id),
                 )
             if not text:
                 return
@@ -443,12 +466,21 @@ class SpamGuard(discord.Client):
         history.extend(history_line(m) for m in reversed(older))
         history.append(current)
 
-    async def check_contribution(self, message: discord.Message, context: list[tuple[str, str]], text: str) -> None:
+    async def check_contribution(
+        self, message: discord.Message, context: list[tuple[str, str]], text: str, exempt: bool = False,
+    ) -> None:
         verdict = await self.judge.judge(speaker(message.author), context, text, PERSONA)
         if verdict is None:
             return
         member = message.author
         details = [f"first check: {verdict.first}"] if verdict.first else []
+        if verdict.ok and verdict.aura != "none" and (gave := await aura.award(self, message, verdict, PERSONA)):
+            details.append(gave)
+        if exempt:
+            self.log_event(message.guild, message.channel, "check", member, detail="; ".join(details) or None,
+                           content=text[:500], verdict=verdict.verdict, reason=verdict.reason, model=verdict.model,
+                           escalated=verdict.escalated, overruled=verdict.overruled)
+            return
         record = dict(
             content=text[:500], verdict=verdict.verdict, reason=verdict.reason, model=verdict.model,
             escalated=verdict.escalated, overruled=verdict.overruled,
@@ -741,7 +773,14 @@ def main() -> None:
     key_name = API_KEYS[AI_PROVIDER]
     if AI_ENABLED and not os.getenv(key_name):
         raise SystemExit(f"Set {key_name} in .env, or AI_ENABLED=false to run without the AI check")
-    SpamGuard().run(TOKEN, root_logger=True)
+    try:
+        SpamGuard().run(TOKEN, root_logger=True)
+    except discord.PrivilegedIntentsRequired:
+        log.error(
+            "The Presence Intent is off in the Discord Developer Portal (Bot → Privileged Gateway Intents), so the "
+            "grass check can't see who's online. Starting without it; turn it on and restart to use the grass check."
+        )
+        SpamGuard(presences=False).run(TOKEN, root_logger=True)
 
 
 if __name__ == "__main__":
