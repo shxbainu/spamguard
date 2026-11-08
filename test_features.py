@@ -97,6 +97,10 @@ class AuraJudgingTests(unittest.TestCase):
         self.assertEqual((verdict.aura, verdict.aura_target), ("callout", "Benny (@empireben)"))
         old_style = parse_verdict(json.dumps({"verdict": "ok", "reason": "fine", "confident": True}))
         self.assertEqual(old_style.aura, "none")
+        self.assertEqual(verdict.aura_level, 2, "missing level counts as 2")
+        leveled = parse_verdict(json.dumps({"verdict": "ok", "reason": "x", "confident": True, "aura": "comeback",
+                                            "aura_target": "", "aura_reason": "cooked", "aura_level": 7}))
+        self.assertEqual(leveled.aura_level, 5)
         made_up = parse_verdict(json.dumps({"verdict": "ok", "reason": "x", "confident": True, "aura": "rizz"}))
         self.assertEqual(made_up.aura, "none")
 
@@ -137,7 +141,7 @@ class AuraAwardTests(unittest.TestCase):
     def test_callout_gives_and_takes_and_replies_with_points(self):
         talker = StubJudge("too smart??")
         earlier = SimpleNamespace(author=self.ben, channel=SimpleNamespace(id=7))
-        verdict = Verdict("ok", "fine", aura="callout", aura_target="Benny", aura_reason="earth isn't flat")
+        verdict = Verdict("ok", "fine", aura="callout", aura_target="Benny", aura_reason="earth isn't flat", aura_level=2)
         with unittest.mock.patch.object(discord, "Member", SimpleNamespace):
             done = asyncio.run(aura.award(self.bot(talker, [earlier]), self.message(), verdict, "persona"))
         self.assertEqual(self.store.aura_total(1, 6), 50)
@@ -145,9 +149,19 @@ class AuraAwardTests(unittest.TestCase):
         self.assertEqual(self.replies, ["too smart?? +50 aura (Benny -50 aura)"])
         self.assertIn("callout", done)
         self.assertIn("2 to 6 words", talker.requests[0][1][0][1])
+        self.assertIn("(clear)", talker.requests[0][1][0][1], "the line knows how big it was")
+
+    def test_points_scale_with_the_level(self):
+        legendary = Verdict("ok", "fine", aura="comeback", aura_reason="ended him", aura_level=5)
+        asyncio.run(aura.award(self.bot(), self.message(), legendary, "persona"))
+        self.assertEqual(self.store.aura_total(1, 6), 500)
+        self.assertTrue(self.replies[0].endswith("+500 aura"))
+        self.assertTrue(self.store.aura_history(1, 6)[0]["reason"].startswith("legendary"))
+        self.assertEqual([aura.points_for("false_claim", level) for level in range(1, 6)], [-25, -50, -100, -250, -500])
+        self.assertEqual(aura.points_for("comeback", 9), 500, "out of range is clamped")
 
     def test_false_claim_falls_back_without_ai_and_has_a_cooldown(self):
-        verdict = Verdict("ok", "fine", aura="false_claim", aura_reason="said 2+2=5")
+        verdict = Verdict("ok", "fine", aura="false_claim", aura_reason="said 2+2=5", aura_level=3)
         asyncio.run(aura.award(self.bot(), self.message(), verdict, "persona"))
         self.assertTrue(self.replies[0].endswith("-100 aura"))
         asyncio.run(aura.award(self.bot(), self.message(), verdict, "persona"))

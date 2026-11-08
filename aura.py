@@ -20,24 +20,39 @@ AURA_ENABLED = (os.getenv("AURA_ENABLED") or "true").strip().lower() in ("1", "t
 # A member can gain or lose aura from a message at most once per this many minutes, so it stays rare.
 AURA_COOLDOWN_MINUTES = int(os.getenv("AURA_COOLDOWN_MINUTES") or 10)
 
-POINTS = {"comeback": 100, "callout": 50, "called_out": -50, "false_claim": -100, "debate": 100}
+# Points by how big the moment is (level 1 to 5, decided by the AI). The person called out loses what the caller gains.
+LEVEL_POINTS = {
+    "comeback": [25, 50, 100, 250, 500],
+    "callout": [25, 50, 100, 200, 300],
+    "false_claim": [-25, -50, -100, -250, -500],
+}
+DEBATE_POINTS = 100
+LEVEL_NAMES = {1: "decent", 2: "good", 3: "big", 4: "huge", 5: "legendary"}
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "debate": "won a debate", "daily": "daily", "gift": "gift",
-    "shop": "shop",
+    "false_claim": "said something false", "debate": "won a debate", "gift": "gift", "shop": "shop",
 }
-# What the bot is reacting to, for the one-liner it writes.
+# What the bot is reacting to, for the one-liner it writes; {size} is how big the moment was.
 SITUATIONS = {
-    "comeback": "{name} just hit someone with a genuinely good comeback ({reason}). Give them their props",
-    "callout": "{name} just called out {target} for saying something false ({reason}). React to {target} getting exposed or {name} being smart",
-    "false_claim": "{name} just said something blatantly false ({reason}). Call it out like they're dumb",
+    "comeback": "{name} just hit someone with a {size} comeback ({reason}). Give them props that match how good it was",
+    "callout": "{name} just called out {target} ({size}) for saying something false ({reason}). React to {target} getting exposed or {name} being smart, matching how big it was",
+    "false_claim": "{name} just said something {size} false ({reason}). Call it out like they're dumb, matching how bad it was",
 }
-# Used when the AI can't be reached.
+SIZES = {
+    "comeback": {1: "decent", 2: "good", 3: "really good", 4: "brutal", 5: "legendary, all-time"},
+    "callout": {1: "small", 2: "clear", 3: "big", 4: "brutal", 5: "total"},
+    "false_claim": {1: "slightly", 2: "plainly", 3: "confidently", 4: "wildly", 5: "absurdly, spectacularly"},
+}
+# Used when the AI can't be reached: small moments (levels 1-2) and big ones (3-5).
 FALLBACK = {
-    "comeback": ["oh he cooked", "nah that was tuff", "ok that was actually good"],
-    "callout": ["too smart??", "exposed lmao", "caught in 4k"],
-    "false_claim": ["damn ur stupid", "holy shit this guy is dumb", "thats just not true bro"],
+    "comeback": (["ok that was decent", "lowk good"], ["oh he cooked", "nah that was tuff", "BRO 😭"]),
+    "callout": (["fair point", "true"], ["too smart??", "exposed lmao", "caught in 4k"]),
+    "false_claim": (["thats not true", "nah"], ["damn ur stupid", "holy shit this guy is dumb", "what are u on"]),
 }
+
+
+def points_for(kind: str, level: int) -> int:
+    return LEVEL_POINTS[kind][min(5, max(1, level)) - 1]
 
 
 def aura_text(points: int) -> str:
@@ -77,12 +92,15 @@ async def award(bot, message: discord.Message, verdict, persona: str) -> str | N
     now = time.time()
     if now - bot.store.last_aura(guild.id, member.id) < AURA_COOLDOWN_MINUTES * 60:
         return None
-    points = POINTS[verdict.aura]
+    level = verdict.aura_level or 2
+    points = points_for(verdict.aura, level)
+    lost = -points_for("callout", level)
     snippet = message.clean_content[:300]
-    bot.store.add_aura(guild.id, member.id, member.display_name, points, verdict.aura, verdict.aura_reason, snippet, now)
+    reason = f"{LEVEL_NAMES[level]}: {verdict.aura_reason}" if verdict.aura_reason else LEVEL_NAMES[level]
+    bot.store.add_aura(guild.id, member.id, member.display_name, points, verdict.aura, reason, snippet, now)
     target = called_out_member(bot, message, verdict.aura_target) if verdict.aura == "callout" else None
     if target is not None:
-        bot.store.add_aura(guild.id, target.id, target.display_name, POINTS["called_out"], "called_out",
+        bot.store.add_aura(guild.id, target.id, target.display_name, lost, "called_out",
                            f"called out by {member.display_name}: {verdict.aura_reason}", snippet, now)
 
     line = None
@@ -90,23 +108,24 @@ async def award(bot, message: discord.Message, verdict, persona: str) -> str | N
     if talker is not None and bot.chat_budget.take(time.monotonic()):
         situation = SITUATIONS[verdict.aura].format(
             name=member.display_name, target=target.display_name if target else "someone", reason=verdict.aura_reason,
+            size=SIZES[verdict.aura][level],
         )
         line = await talker.say(guild.me.display_name, persona, situation + " in 2 to 6 words. Don't mention aura or points.")
-    line = (line or random.choice(FALLBACK[verdict.aura])).rstrip(" .")
+    line = (line or random.choice(FALLBACK[verdict.aura][level >= 3])).rstrip(" .")
     text = f"{line} {aura_text(points)}"
     if target is not None:
-        text += f" ({target.display_name} {aura_text(POINTS['called_out'])})"
+        text += f" ({target.display_name} {aura_text(lost)})"
     try:
         await message.reply(text, mention_author=False, allowed_mentions=discord.AllowedMentions.none())
     except discord.HTTPException:
         pass
-    return f"aura: {verdict.aura} {aura_text(points)}" + (f", {target.display_name} {aura_text(POINTS['called_out'])}" if target else "")
+    return f"aura: {verdict.aura} level {level} {aura_text(points)}" + (f", {target.display_name} {aura_text(lost)}" if target else "")
 
 
 def give_debate_aura(store, guild_id: int, winners: list[discord.Member], motion: str) -> None:
     if AURA_ENABLED:
         for member in winners:
-            store.add_aura(guild_id, member.id, member.display_name, POINTS["debate"], "debate", f"won: {motion[:150]}")
+            store.add_aura(guild_id, member.id, member.display_name, DEBATE_POINTS, "debate", f"won: {motion[:150]}")
 
 
 aura_commands = app_commands.Group(name="aura", description="Aura points", guild_only=True)

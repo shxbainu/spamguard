@@ -1,4 +1,4 @@
-"""The casino: aura is the currency. Everyone gets a one-time starting stack and can claim more with /daily, then
+"""The casino: aura is the currency. Everyone gets a one-time starting stack, earns more in chat, and can
 bet it on /coinflip, /slots, /roulette, /blackjack, /higherlower or a /duel against someone, give it away with
 /give, or spend it in the /shop. Bets can be a number, "half" or "all" (also "1k", "2.5k")."""
 from __future__ import annotations
@@ -15,10 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 START_AURA = int(os.getenv("CASINO_START_AURA") or 500)
-DAILY_AURA = int(os.getenv("DAILY_AURA") or 100)
-DAILY_STREAK_BONUS = 20  # extra per day in a row
-DAILY_MAX = 200
-# If set, games only work in this channel (the shop, /daily and /give work anywhere).
+# If set, games only work in this channel (the shop and /give work anywhere).
 CASINO_CHANNEL_ID = int(os.getenv("CASINO_CHANNEL_ID") or 0)
 GAME_TIMEOUT = 120  # seconds before an unfinished blackjack or higher/lower game ends itself
 
@@ -56,7 +53,7 @@ def parse_bet(text: str, available: int) -> int | str:
         except ValueError:
             return "Bet a number, like 100, 1k, half or all."
     if available <= 0:
-        return f"You're broke ({fmt(available)}). Claim /daily or earn some aura first."
+        return f"You're broke ({fmt(available)}). Earn some aura first."
     if amount < 1:
         return "Bet at least 1 aura."
     if amount > available:
@@ -519,32 +516,6 @@ async def duel_cmd(interaction: discord.Interaction, user: discord.Member, bet: 
 # ---- getting aura -------------------------------------------------------------------
 
 
-def daily_amount(streak: int) -> int:
-    return min(DAILY_MAX, DAILY_AURA + DAILY_STREAK_BONUS * (streak - 1))
-
-
-@app_commands.command(name="daily", description="Claim your free daily aura (more for days in a row)")
-@app_commands.guild_only()
-async def daily_cmd(interaction: discord.Interaction) -> None:
-    store, member = interaction.client.store, interaction.user
-    started = welcome(store, member)
-    key = f"daily:{member.guild.id}:{member.id}"
-    last, _, streak = (store.get_state(key) or "0:0").partition(":")
-    last, streak, now = float(last), int(streak or 0), time.time()
-    if now - last < 86400:
-        await interaction.response.send_message(f"You already claimed today. Come back <t:{int(last + 86400)}:R>.", ephemeral=True)
-        return
-    streak = streak + 1 if now - last < 2 * 86400 else 1
-    amount = daily_amount(streak)
-    store.set_state(key, f"{now}:{streak}")
-    store.add_aura(member.guild.id, member.id, member.display_name, amount, "daily", f"day {streak} in a row")
-    bonus = f" (plus {fmt(started)} to start)" if started else ""
-    await interaction.response.send_message(
-        f"🌅 {member.display_name} claimed **{fmt(amount)}**{bonus}. Streak: {streak} day{'s' if streak != 1 else ''}. "
-        f"Balance {fmt(balance(store, member.guild.id, member.id))}."
-    )
-
-
 @app_commands.command(name="give", description="Give some of your aura to someone")
 @app_commands.describe(user="Who gets it", amount="How much (a number, half or all)")
 @app_commands.guild_only()
@@ -565,4 +536,4 @@ async def give_cmd(interaction: discord.Interaction, user: discord.Member, amoun
     )
 
 
-COMMANDS = [coinflip_cmd, slots_cmd, roulette_cmd, blackjack_cmd, higherlower_cmd, duel_cmd, daily_cmd, give_cmd]
+COMMANDS = [coinflip_cmd, slots_cmd, roulette_cmd, blackjack_cmd, higherlower_cmd, duel_cmd, give_cmd]

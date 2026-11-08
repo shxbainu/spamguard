@@ -194,7 +194,6 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/debate stop` | Ends the debate (whoever started it, or a mod). |
 | `/grass` | How long the grass-check person has been on Discord and gaming today. |
 | Right-click a message → **Apps → Fact check**, or `/factcheck claim` | A formal fact-check with a rating and web sources. |
-| `/daily` | Free aura once a day (more for days in a row). |
 | `/coinflip` `/slots` `/roulette` `/blackjack` `/higherlower` | Casino games; bet aura. |
 | `/duel @user bet` | You both bet the same aura; winner takes all. |
 | `/give @user amount` | Give someone aura. |
@@ -207,14 +206,15 @@ Right-click any message → **Apps → Quote this**. When the bot chats with som
 
 ### Aura
 
-The moderation check already reads each message, so it also spots standout moments. Most messages get nothing; the smarter second-opinion model (`AI_UNSURE_MODEL`) has to agree before anything is given. When it happens the bot replies with one short line in its voice and the points:
+The moderation check already reads each message, so it also spots standout moments and rates how big each one is, from 1 to 5. Most messages get nothing, and the smarter second-opinion model (`AI_UNSURE_MODEL`) has to agree on both the moment and its size. When it happens the bot replies with one short line in its voice that matches the size, and the points:
 
-| Moment | Aura |
-|---|---|
-| A genuinely good comeback | +100 |
-| Calling out something false | +50 (and the person called out gets −50) |
-| Saying something blatantly false | −100 |
-| Winning a `/debate` | +100 each |
+| Moment | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Comeback (decent → legendary) | +25 | +50 | +100 | +250 | +500 |
+| Calling out something false (small slip → total takedown); the person called out loses the same | +25 | +50 | +100 | +200 | +300 |
+| Saying something false (small mistake → absurdly wrong) | −25 | −50 | −100 | −250 | −500 |
+
+Winning a `/debate` is +100 each, and a message fact-checked as false is −100 for its author and +50 for the checker. Most moments land at 1 or 2; 4 and 5 are for genuinely exceptional ones.
 
 Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated. Turn it off with `AURA_ENABLED=false`.
 
@@ -226,7 +226,7 @@ The same web search backs `/settleargument` facts and debate decisions, which al
 
 ### Casino and shop
 
-Aura is the currency. Everyone gets 500 the first time they use the casino (`CASINO_START_AURA`), plus `/daily`: 100, and 20 more for each day in a row up to 200 (`DAILY_AURA`). Bets can be a number, `1k`, `half` or `all`; you can't bet aura you don't have, so negative aura means you're broke until you earn some.
+Aura is the currency. Everyone gets 500 the first time they use the casino (`CASINO_START_AURA`); after that, aura comes from chat (comebacks, callouts), debates, fact-checks, `/give` and winning bets. Bets can be a number, `1k`, `half` or `all`; you can't bet aura you don't have, so negative aura means you're broke until you earn some.
 
 | Game | How it pays |
 |---|---|
