@@ -220,9 +220,15 @@ Each person can gain or lose aura from a message at most once every `AURA_COOLDO
 
 ### Fact check
 
-Right-click a message → **Apps → Fact check** (or `/factcheck claim:"..."`). It's written like a published fact-check: the claim, a rating (true, mostly true, misleading, false, unverifiable, or opinion), the evidence, a correction if needed, and **sources**. When the `/settleargument` AI list includes Gemini, it searches Google first and links the pages it used; otherwise it says it's going off the AI's own knowledge. Each message can only be checked once, and each person can check once every 30 seconds. A message rated **false** costs its author 100 aura and gives the person who checked it 50.
+Right-click a message → **Apps → Fact check** (or `/factcheck claim:"..."`). It's written like a published fact-check: the claim, a rating (true, mostly true, misleading, false, unverifiable, or opinion), the evidence, a correction if needed, and **sources**. Each message can only be checked once, and each person can check once every 30 seconds. A message rated **false** costs its author 100 aura and gives the person who checked it 50.
 
-The same web search backs `/settleargument` facts and debate decisions, which also list their sources.
+Where the sources come from:
+
+1. **Gemini with Google Search**, if your key has search allowance. Free keys usually don't (it answers "quota exceeded"), so after one refusal the bot stops trying for an hour.
+2. Otherwise **Wikipedia**: the bot looks the claim up (free, no key, costs no AI tokens), gives the AI the top few articles, and lists the ones the AI says it relied on. If nothing relevant turns up, it says the check relies on the AI's own knowledge.
+3. Groq's gpt-oss models can also browse the web (`GROQ_WEB_SEARCH=true`), but one search reads whole pages and uses 30,000–90,000 tokens of the 200,000 free daily allowance, which would starve the chat, so it's off by default.
+
+Debate decisions use the same sources (looking up the motion). `/settleargument` lists sources only when Gemini search works.
 
 ### Casino and shop
 

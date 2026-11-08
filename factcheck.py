@@ -39,7 +39,7 @@ def fact_embed(check, quoted_by: str | None, model: str) -> discord.Embed:
     if check.sources:
         embed.add_field(name="Sources", value=source_list(check.sources), inline=False)
     else:
-        embed.add_field(name="Sources", value="No web search was available, so this relies on the AI's general knowledge.", inline=False)
+        embed.add_field(name="Sources", value="No matching source was found, so this relies on the AI's general knowledge.", inline=False)
     embed.set_footer(text=f"Checked by {model} · AI can make mistakes; check the sources")
     return embed
 

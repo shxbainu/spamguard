@@ -14,7 +14,10 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
+
+import wiki
 
 log = logging.getLogger("spamguard.judge")
 
@@ -133,8 +136,9 @@ DEBATE_SCHEMA = {
         "reasoning": {"type": "string"},
         "best_speaker": {"type": "string"},
         "facts": {"type": "array", "items": {"type": "string"}},
+        "sources_used": {"type": "array", "items": {"type": "integer"}},
     },
-    "required": ["winner", "verdict", "reasoning", "best_speaker", "facts"],
+    "required": ["winner", "verdict", "reasoning", "best_speaker", "facts", "sources_used"],
     "additionalProperties": False,
 }
 
@@ -165,8 +169,9 @@ FACTCHECK_SCHEMA = {
         "summary": {"type": "string"},
         "explanation": {"type": "string"},
         "correction": {"type": "string"},
+        "sources_used": {"type": "array", "items": {"type": "integer"}},
     },
-    "required": ["rating", "claim", "summary", "explanation", "correction"],
+    "required": ["rating", "claim", "summary", "explanation", "correction", "sources_used"],
     "additionalProperties": False,
 }
 
@@ -669,6 +674,18 @@ class Judge:
         return their answer with no sources."""
         return await self.complete(system, prompt, None, max_tokens), []
 
+    async def sourced(self, system: str, prompt: str, schema: dict, query: str) -> tuple[dict | None, list[tuple[str, str]]]:
+        """A JSON answer with sources: the model's own web search if it has one that works, otherwise Wikipedia
+        articles for `query` given to the model as reference material (it lists the ones it used)."""
+        if self.can_search:
+            text, sources = await self.search(system, prompt, 4096)
+            data = extract_json(clean_reply(text))
+            if data is not None and sources and all(key in data for key in schema["required"] if key != "sources_used"):
+                return data, sources
+        articles = await wiki.lookup(query)
+        data = extract_json(clean_reply(await self.complete(system, prompt + wiki.evidence_block(articles), schema, 4096)))
+        return data, (wiki.used_sources(articles, data.get("sources_used")) if data else [])
+
     async def research(self, system: str, prompt: str, schema: dict, max_tokens: int = 4096) -> tuple[dict | None, list[tuple[str, str]]]:
         """A JSON answer backed by web search when the model can search; otherwise (or if searching fails) a plain
         JSON answer without sources."""
@@ -717,9 +734,9 @@ class Judge:
     ) -> DebateRuling | None:
         """Decides a debate from its speeches ((round name, side, speaker, text)), as a formal written decision
         with sources when the model can search. None if the model couldn't be reached."""
-        data, sources = await self.research(DEBATE_PROMPT, build_debate_prompt(motion, speeches), DEBATE_SCHEMA)
+        data, sources = await self.sourced(DEBATE_PROMPT, build_debate_prompt(motion, speeches), DEBATE_SCHEMA, motion)
         try:
-            ruling = DebateRuling(**{key: data[key] for key in DEBATE_SCHEMA["required"]}, sources=sources)
+            ruling = DebateRuling(**{key: data[key] for key in DEBATE_SCHEMA["required"] if key != "sources_used"}, sources=sources)
         except (KeyError, TypeError):
             log.warning("Couldn't read the AI's debate ruling: %r", str(data)[:200])
             return None
@@ -735,9 +752,9 @@ class Judge:
         chat = f"<chat>\n{format_chat(list(context)) or '(no other messages)'}\n</chat>\n\n" if context else ""
         who = f" made by {author}" if author else ""
         prompt = f"{chat}The claim{who}:\n<claim>\n{claim[:1500]}\n</claim>"
-        data, sources = await self.research(FACTCHECK_PROMPT, prompt, FACTCHECK_SCHEMA)
+        data, sources = await self.sourced(FACTCHECK_PROMPT, prompt, FACTCHECK_SCHEMA, claim)
         try:
-            check = FactCheck(**{key: str(data[key]) for key in FACTCHECK_SCHEMA["required"]}, sources=sources)
+            check = FactCheck(**{key: str(data[key]) for key in FACTCHECK_SCHEMA["required"] if key != "sources_used"}, sources=sources)
         except (KeyError, TypeError):
             log.warning("Couldn't read the AI's fact-check: %r", str(data)[:200])
             return None
@@ -893,15 +910,24 @@ class GeminiJudge(Judge):
 
     can_search = True
 
+    search_blocked_until = 0.0
+
     async def search(self, system: str, prompt: str, max_tokens: int) -> tuple[str | None, list[tuple[str, str]]]:
         errors, types = self._errors, self._types
+        if time.monotonic() < self.search_blocked_until:
+            return None, []
         config = types.GenerateContentConfig(
             system_instruction=system, max_output_tokens=max_tokens, tools=[types.Tool(google_search=types.GoogleSearch())],
         )
         try:
             response = await self.client.aio.models.generate_content(model=self.model, contents=prompt, config=config)
         except errors.APIError as e:
-            log.warning("Gemini search failed (%s: %s)", e.code, e.message)
+            if e.code == 429:
+                # Free keys often get no Google Search allowance at all; don't keep spending a request on it.
+                self.search_blocked_until = time.monotonic() + 3600
+                log.warning("Gemini's Google Search is out of free quota; using other models to search for the next hour")
+            else:
+                log.warning("Gemini search failed (%s: %s)", e.code, e.message)
             return None, []
         return response.text, grounding_sources(response)
 
@@ -956,6 +982,35 @@ class OpenAICompatibleJudge(Judge):
             messages=[{"role": "system", "content": system}] + [{"role": role, "content": text} for role, text in turns],
             **extra,
         )
+        response = await self._create(request)
+        if response is None or not response.choices:
+            return None
+        return response.choices[0].message.content
+
+    @property
+    def can_search(self) -> bool:
+        """Groq's gpt-oss models have a built-in web search (browser_search). It reads whole pages, so one search
+        can use 30k-90k tokens of the 200k free daily allowance; it's off unless GROQ_WEB_SEARCH=true."""
+        return GROQ_WEB_SEARCH and self.provider == "groq" and self.model.startswith("openai/gpt-oss")
+
+    async def search(self, system: str, prompt: str, max_tokens: int) -> tuple[str | None, list[tuple[str, str]]]:
+        # Opening whole pages costs ~25k tokens a search; the search results alone are usually enough and keep it
+        # within the free daily allowance.
+        system += SEARCH_NOTE
+        request = dict(
+            model=self.model, max_tokens=max(max_tokens, 4096), timeout=SEARCH_TIMEOUT,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            tools=[{"type": "browser_search"}], tool_choice="required", **self.extra,
+        )
+        response = await self._create(request)
+        if response is None or not response.choices:
+            return None, []
+        message = response.choices[0].message
+        return strip_citations(message.content), searched_pages(message)
+
+    async def _create(self, request: dict):
+        """The API's response, retrying once on a short rate limit; None if it failed."""
+        openai = self._openai
         try:
             try:
                 response = await self.client.chat.completions.create(**request)
@@ -975,9 +1030,37 @@ class OpenAICompatibleJudge(Judge):
         except openai.APIConnectionError:
             log.warning("Couldn't reach %s; skipping", self.provider)
             return None
-        if not response.choices:
-            return None
-        return response.choices[0].message.content
+        return response
+
+
+GROQ_WEB_SEARCH = (os.getenv("GROQ_WEB_SEARCH") or "false").strip().lower() in ("1", "true", "yes", "on")
+SEARCH_NOTE = (
+    "\nSearch the web with browser_search to check the facts. Don't open whole pages unless the search results "
+    "don't answer it. Don't put citation markers in your answer; just answer with the JSON object."
+)
+SEARCH_TIMEOUT = 60
+CITATION = re.compile(r"【[^】]*】")
+
+
+def strip_citations(text: str | None) -> str | None:
+    """Removes gpt-oss's 【1†L13-L16】 citation markers."""
+    return CITATION.sub("", text) if text else text
+
+
+def searched_pages(message) -> list[tuple[str, str]]:
+    """(title, url) of the pages Groq's browser_search found, without repeats."""
+    extra = getattr(message, "model_extra", None) or {}
+    pages: dict[str, str] = {}
+    for tool in extra.get("executed_tools") or []:
+        for result in ((tool.get("search_results") or {}).get("results") or []):
+            url, title = result.get("url"), result.get("title") or result.get("url")
+            if not url:
+                continue
+            if " - viewing lines " in title:  # an opened page; keep the search result's title if there was one
+                title = url
+            if url not in pages or pages[url] == url:
+                pages[url] = title
+    return [(title, url) for url, title in pages.items()][:5]
 
 
 class SecondOpinion:
@@ -1039,7 +1122,7 @@ class FallbackJudge(Judge):
             if judge.can_search:
                 text, sources = await judge.search(system, prompt, max_tokens)
                 if text and text.strip():
-                    self._last_model = f"{judge.model} + Google Search" if sources else judge.model
+                    self._last_model = f"{judge.model} + web search" if sources else judge.model
                     return text, sources
         return None, []
 

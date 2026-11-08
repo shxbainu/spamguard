@@ -193,6 +193,9 @@ class GrassTests(unittest.TestCase):
 
 
 class DebateTests(unittest.TestCase):
+    def setUp(self):
+        no_wikipedia(self)
+
     def test_speaking_order_alternates_and_rotates(self):
         sides = {"for": ["a", "b"], "against": ["c"]}
         order = debate.speaking_order(sides, 3)
@@ -247,7 +250,42 @@ FACT = {"rating": "false", "claim": "The Great Wall is visible from space.", "su
         "explanation": "Astronauts report it can't be seen 😭.", "correction": "It is too narrow to see from orbit."}
 
 
+ARTICLES = [
+    {"title": "Great Wall of China", "url": "https://en.wikipedia.org/wiki/Great_Wall_of_China", "text": "A wall."},
+    {"title": "Artificial structures visible from space", "url": "https://en.wikipedia.org/wiki/Artificial_structures_visible_from_space", "text": "Not the wall."},
+    {"title": "Factoid", "url": "https://en.wikipedia.org/wiki/Factoid", "text": "Unrelated."},
+]
+
+
+def no_wikipedia(test_case, articles=()):
+    """Stops tests from reaching Wikipedia; `articles` is what a lookup returns."""
+    async def lookup(query, limit=3):
+        test_case.queries.append(query)
+        return list(articles)
+    test_case.queries = []
+    patcher = unittest.mock.patch("wiki.lookup", lookup)
+    patcher.start()
+    test_case.addCleanup(patcher.stop)
+
+
 class FactCheckTests(unittest.TestCase):
+    def setUp(self):
+        no_wikipedia(self)
+
+    def test_wikipedia_sources_are_the_ones_the_ai_used(self):
+        no_wikipedia(self, ARTICLES)
+        judge = StubJudge(json.dumps(dict(FACT, sources_used=[2, 2, 9, "x"])))
+        check = asyncio.run(judge.factcheck("great wall visible from space"))
+        self.assertEqual(check.sources, [("Artificial structures visible from space", ARTICLES[1]["url"])])
+        self.assertEqual(self.queries, ["great wall visible from space"])
+        self.assertIn('<source n="2" title="Artificial structures visible from space">', judge.requests[0][1][0][1])
+
+    def test_failed_search_falls_back_to_wikipedia(self):
+        no_wikipedia(self, ARTICLES)
+        judge = SearchingJudge(None, plain=json.dumps(dict(FACT, sources_used=[1])))
+        check = asyncio.run(judge.factcheck("great wall"))
+        self.assertEqual(check.sources, [("Great Wall of China", ARTICLES[0]["url"])])
+
     def test_search_answer_keeps_its_sources_even_with_prose_around_the_json(self):
         judge = SearchingJudge("Here is my answer:\n```json\n" + json.dumps(FACT) + "\n```")
         check = asyncio.run(judge.factcheck("great wall visible from space", [("luke", "trust")], "luke"))
@@ -344,6 +382,16 @@ class CasinoTests(unittest.TestCase):
         self.assertEqual(store.items(1, 5), {"shutup": 2})
         self.assertTrue(store.use_item(1, 5, "shutup"))
         self.assertEqual(store.items(1, 5), {"shutup": 1})
+
+
+class WikiTests(unittest.TestCase):
+    def test_keywords_and_evidence(self):
+        import wiki
+        self.assertEqual(wiki.keywords("could ja morant dunk over the great wall of china"), "ja morant dunk over great wall")
+        self.assertEqual(wiki.evidence_block([]), "")
+        self.assertIn("sources_used", wiki.evidence_block(ARTICLES))
+        self.assertEqual(wiki.used_sources(ARTICLES, None), [])
+        self.assertEqual(len(wiki.used_sources(ARTICLES, [1, 3])), 2)
 
 
 class ShopTests(unittest.TestCase):
