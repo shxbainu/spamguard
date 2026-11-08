@@ -30,7 +30,6 @@ LEVEL_POINTS = {
     "bad_take": [-25, -50, -100, -250, -500],
 }
 DEBATE_POINTS = 100
-LEVEL_NAMES = {1: "decent", 2: "good", 3: "big", 4: "huge", 5: "legendary"}
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
     "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "gift": "gift", "shop": "shop",
@@ -102,7 +101,8 @@ async def award(bot, message: discord.Message, verdict, persona: str) -> str | N
     points = points_for(verdict.aura, level)
     lost = -points_for("callout", level)
     snippet = message.clean_content[:300]
-    reason = f"{LEVEL_NAMES[level]}: {verdict.aura_reason}" if verdict.aura_reason else LEVEL_NAMES[level]
+    size = SIZES[verdict.aura][level]
+    reason = f"{size}: {verdict.aura_reason}" if verdict.aura_reason else size
     bot.store.add_aura(guild.id, member.id, member.display_name, points, verdict.aura, reason, snippet, now)
     target = called_out_member(bot, message, verdict.aura_target) if verdict.aura == "callout" else None
     if target is not None:
@@ -114,7 +114,7 @@ async def award(bot, message: discord.Message, verdict, persona: str) -> str | N
     if talker is not None and bot.chat_budget.take(time.monotonic()):
         situation = SITUATIONS[verdict.aura].format(
             name=member.display_name, target=target.display_name if target else "someone", reason=verdict.aura_reason,
-            size=SIZES[verdict.aura][level],
+            size=size,
         )
         line = await talker.say(guild.me.display_name, persona, situation + " in 2 to 6 words. Don't mention aura or points.")
     line = (line or random.choice(FALLBACK[verdict.aura][level >= 3])).rstrip(" .")

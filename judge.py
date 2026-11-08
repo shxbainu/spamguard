@@ -23,7 +23,7 @@ log = logging.getLogger("spamguard.judge")
 
 SYSTEM_PROMPT = """You help moderate a Discord chat. You get the recent chat for context and one new message from a specific member, and you decide whether that new message contributes to the conversation.
 
-Be lenient. Casual talk, jokes, banter, a meme that fits the moment, short replies ("lol", "same", "fr"), genuine questions, changing the subject now and then, and opinions you disagree with are all fine: verdict "ok".
+Be lenient. Casual talk, jokes, banter, a meme that fits the moment, short replies ("lol", "same", "fr"), genuine questions, changing the subject now and then, and opinions you disagree with are all fine: verdict "ok" (a terrible opinion is still "ok", though it can get aura below).
 
 Flag only messages that are clearly noise in context:
 - "low_effort": gibberish, keyboard mashing, emoji or letter spam, a random non-sequitur or irrelevant question that ignores what everyone else is talking about, or a pointless question that was just answered.
@@ -37,7 +37,7 @@ Aura is separate from the verdict. Almost every message gets "aura": "none"; it'
 - "comeback": a genuinely clever or funny reply that lands against someone who came at the author (or at someone else). Ordinary insults, swearing, "ur mid" or just being loud don't count.
 - "callout": correctly calls out something in the recent chat that is clearly false or contradicts itself, ideally with the right fact. Set "aura_target" to the name of the person being called out, exactly as it's written in the chat.
 - "false_claim": states something as fact that is blatantly and verifiably false. Opinions, predictions, jokes, sarcasm, obvious exaggeration and anything you aren't certain about don't count.
-- "bad_take": states an opinion that almost everyone would agree is terrible: trashing something nearly everyone likes ("oranges taste like shit", "puppies are ugly", "water is disgusting") or praising something nearly everyone hates. It has to be close to universal. Anything people genuinely split on doesn't count (pineapple on pizza, cats vs dogs, which game or team or artist is best, politics, religion), and neither does an obvious joke at their own expense or a complaint about one specific bad experience.
+- "bad_take": states an opinion that almost everyone would agree is terrible: trashing something nearly everyone likes ("oranges taste like shit", "puppies are ugly", "water is disgusting") or praising something nearly everyone hates. It has to be close to universal. Anything people genuinely split on doesn't count (pineapple on pizza, cats vs dogs, which game or team or artist is best, politics, religion), and neither does an obvious joke at their own expense or a complaint about one specific bad experience. Swearing, or the take fitting the conversation, doesn't stop it being a bad take.
 Your own opinion of the topic doesn't matter. When unsure, "none".
 "aura_level" says how big the moment is, from 1 to 5, and is 0 when aura is "none":
 - comeback: 1 decent, 2 good, 3 really funny or clever, 4 a brutal line the chat won't let go of, 5 legendary (the best comeback you've seen; almost never).

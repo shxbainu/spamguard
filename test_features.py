@@ -168,6 +168,7 @@ class AuraAwardTests(unittest.TestCase):
         self.assertEqual(parse_verdict(json.dumps({"verdict": "ok", "reason": "x", "confident": True, "aura": "bad_take",
                                                    "aura_target": "", "aura_reason": "y", "aura_level": 1})).aura, "bad_take")
         self.assertEqual(self.store.aura_from_moments(1, 6), -25)
+        self.assertEqual(self.store.aura_history(1, 6)[0]["reason"], "weird: trashed oranges", "sized in bad-take words")
 
     def test_false_claim_falls_back_without_ai_and_has_a_cooldown(self):
         verdict = Verdict("ok", "fine", aura="false_claim", aura_reason="said 2+2=5", aura_level=3)

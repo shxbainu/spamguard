@@ -55,7 +55,7 @@ Each job can use a different AI, and each provider has its own free allowance, s
 
 | Job | Setting | Default in `.env.example` | Why |
 |---|---|---|---|
-| "Not contributing" check | `AI_PROVIDER` / `AI_MODEL` | Groq `openai/gpt-oss-20b`, then `qwen/qwen3.8-27b` | Fast and cheap for checking every message |
+| "Not contributing" check | `AI_PROVIDER` / `AI_MODEL` | Groq `qwen/qwen3.8-27b`, then `openai/gpt-oss-20b` | Fast and cheap for checking every message; qwen spots bad takes much better than gpt-oss-20b |
 | Second opinion when that check isn't sure | `AI_UNSURE_PROVIDER` / `AI_UNSURE_MODEL` | Gemini 3.5 Flash-Lite | Smarter, so it's saved for the hard calls |
 | `/settleargument` | `SETTLE_PROVIDER` / `SETTLE_MODEL` | Gemini 3.5 Flash-Lite, then Groq `openai/gpt-oss-120b`, then `openai/gpt-oss-20b` | Scores higher than gpt-oss-120b on benchmarks |
 | AI chat channel | `CHAT_PROVIDER` / `CHAT_MODEL` | Gemini 3.5 Flash-Lite, then Groq `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b` | Same brain as mentions, so it sounds the same everywhere; Gemini can also see pictures |
