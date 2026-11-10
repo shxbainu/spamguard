@@ -408,11 +408,34 @@ def build_chat_turns(history: list[tuple[str, str]], name: str) -> list[tuple[st
     return turns
 
 
+TONE_NOTE = """
+
+Before your message, start with exactly one tag for how {author}'s last message treated you, decided before you \
+think about your reply: [nice] if it was nice to you (thanks, "ty", hyping you up, agreeing you were right, calling \
+you twin, saying you're tuff, saying you have aura, "im crine" or laughing at your joke), [rude] if it put you down \
+(stfu, shut up, calling you mid, cooked, chopped, washed, a bum or a clanker, "nobody asked", saying you have no aura, \
+sarcastic thanks like "thanks for nothing") or [neutral] for anything else, including questions and talking about \
+other things. Read it the way this group texts, using the slang above. How you'd reply, roasting included, doesn't \
+change the tag. Nobody sees the tag."""
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+LEADING_TAG = re.compile(r"^\s*\[[a-z ]{1,15}\]\s*", re.IGNORECASE)
+TONE_TAG = re.compile(r"\s*[\[(]\s*(?:tone\s*:\s*)?(nice|rude|neutral)\s*[\])]\s*[.!]?", re.IGNORECASE)
+
+
+def split_tone(text: str | None) -> tuple[str | None, str | None]:
+    """(the reply without its tone tag, the last tag); the tag is None when the model didn't add one."""
+    if not text:
+        return text, None
+    tags = TONE_TAG.findall(text)
+    text = LEADING_TAG.sub("", TONE_TAG.sub(" ", text)).strip()  # and any other tag it made up, like [loud]
+    return text or None, (tags[-1].lower() if tags else None)
+
+
 def clean_reply(text: str | None) -> str | None:
-    """Drops <think> blocks some models (Qwen) put in their answer."""
+    """Drops <think> blocks some models (Qwen) put in their answer, and stray control characters (like NUL)."""
     if text is None:
         return None
-    return THINKING.sub("", text).strip() or None
+    return CONTROL.sub("", THINKING.sub("", text)).strip() or None
 
 
 def name_variants(speakers: list[str]) -> list[str]:
@@ -797,14 +820,21 @@ class Judge:
         persona_emojis = {emoji.replace("\ufe0f", "") for emoji in EMOJI.findall(persona)}
         return casual(reply, emojis_allowed=persona_emojis)
 
-    async def chat(
+    async def chat(self, *args, **kwargs) -> str | None:
+        """An in-character reply to the last message (see chat_and_tone)."""
+        return (await self.chat_and_tone(*args, **kwargs))[0]
+
+    async def chat_and_tone(
         self, name: str, persona: str, history: list[tuple[str, str]], author: str,
         images: list = (), elsewhere: list[tuple[str, str]] = (), quotes: list[str] = (), opinion: str | None = None,
-    ) -> str | None:
-        """An in-character reply to the last message in `history`, or None if the model couldn't be reached.
-        `images` are pictures in (or replied to by) that message; `elsewhere` is (channel, text) of the bot's recent
-        replies in other channels, so it stays consistent across the server; `opinion` is how the bot feels about
-        the person it's answering."""
+        rate_tone: bool = False,
+    ) -> tuple[str | None, str | None]:
+        """(an in-character reply to the last message in `history` or None if the model couldn't be reached, and
+        with `rate_tone` how that message treated the bot: "nice", "rude" or "neutral", or None if the model didn't
+        say). `images` are pictures in (or replied to by) that message; `elsewhere` is (channel, text) of the bot's
+        recent replies in other channels, so it stays consistent across the server; `opinion` is how the bot feels
+        about the person it's answering. The tone is read by the same model in the same call, with the personality
+        and slang in front of it, so it understands the group's texting better than a word list."""
         system = CHAT_PROMPT.format(name=name, persona=persona, slang=SLANG)
         if elsewhere:
             said = "\n".join(f"- #{channel}: {text[:200]}" for channel, text in elsewhere)
@@ -818,10 +848,12 @@ class Judge:
             )
         if opinion:
             system += f"\n\n{opinion}"
+        if rate_tone:
+            system += TONE_NOTE.format(author=author)
         turns = build_chat_turns(history, name)
         recent = [text for speaker, text in history if speaker == name][-3:]
         max_tokens = CHAT_TOKENS.get(getattr(self, "effort", None), 768)
-        reply = clean_reply(await self.send(system, turns, None, max_tokens, images))
+        reply, tone = split_tone(clean_reply(await self.send(system, turns, None, max_tokens, images)))
         from_others = bool(history) and history[-1][0] != name
         ordered = ordered_words(history[-1][1], name) if from_others else None
         asked = from_others and not ordered and is_question(history[-1][1], name)
@@ -833,7 +865,8 @@ class Judge:
             log.info("Rewriting chat reply %r: %s", reply, " ".join(issues))
             role, last = turns[-1]
             note = f"{last}\n\n(note for your next message only: {' '.join(issues)})"
-            reply = clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, max_tokens, images)) or reply
+            rewrite, second_tone = split_tone(clean_reply(await self.send(system, turns[:-1] + [(role, note)], None, max_tokens, images)))
+            reply, tone = rewrite or reply, tone or second_tone
             if echoes(reply, ordered):
                 log.info("Chat reply still did what it was told (%r); refusing instead", reply)
                 reply = refusal(recent)
@@ -844,7 +877,7 @@ class Judge:
         persona_emojis = {emoji.replace("\ufe0f", "") for emoji in EMOJI.findall(persona)}
         return casual(
             reply, allow_emoji=not EMOJI.search(previous), names=names, emojis_allowed=persona_emojis, recent=recent,
-        )
+        ), (tone if rate_tone else None)
 
 
 class ClaudeJudge(Judge):

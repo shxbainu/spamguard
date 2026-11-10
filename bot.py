@@ -374,10 +374,11 @@ class SpamGuard(discord.Client):
         in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
         if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
             await self.moderate(message, text, is_gif, context)
-        bonus = self.nice_bonus(message, text, in_chat_channel)
+        to_bot = self.talking_to_bot(message, in_chat_channel) and not self.remaining_penalty(message.guild.id, message.author.id)
         if self.wants_reply(message, in_chat_channel):
-            self.spawn(self.chat_reply(message, bonus))
-        elif bonus:
+            # The chat AI reads how they treated the bot while it writes the reply.
+            self.spawn(self.chat_reply(message, rate=to_bot))
+        elif to_bot and (bonus := self.react_to(message, text)):
             self.spawn(self.thank(message, bonus))
 
     async def moderate(self, message: discord.Message, text: str, is_gif: bool, context: list[tuple[str, str]]) -> None:
@@ -427,14 +428,13 @@ class SpamGuard(discord.Client):
         others = [m for m in message.mentions if m != self.user] or ([replied_to] if replied_to else [])
         return in_chat_channel and not others
 
-    def nice_bonus(self, message: discord.Message, text: str, in_chat_channel: bool) -> int:
+    def react_to(self, message: discord.Message, text: str, tone: str | None = None) -> int:
         """Updates the bot's opinion of someone talking to it, and returns aura for being nice to it if the roll
-        hits (0 otherwise)."""
-        if not self.talking_to_bot(message, in_chat_channel) or self.remaining_penalty(message.guild.id, message.author.id):
-            return 0
-        if change := rep.react(self.store, message.author, text):
-            log.info("Rep: %s %+d (%r)", message.author, change, text[:80])
-        points = aura.nice_aura(self.store, message.author, text)
+        hits (0 otherwise). `tone` is the chat AI's read ("nice", "rude" or "neutral"); without it the wording
+        decides."""
+        if change := rep.react(self.store, message.author, text, tone=tone):
+            log.info("Rep: %s %+d (%s, %r)", message.author, change, f"AI read it as {tone}" if tone else "from the wording", text[:80])
+        points = aura.nice_aura(self.store, message.author, text, tone=tone)
         if points:
             log.info("Nice to the bot: %s +%d aura (%r)", message.author, points, text[:80])
         return points
@@ -465,7 +465,10 @@ class SpamGuard(discord.Client):
         self.last_reply[message.author.id] = now
         return True
 
-    async def chat_reply(self, message: discord.Message, bonus: int = 0) -> None:
+    async def chat_reply(self, message: discord.Message, rate: bool = False) -> None:
+        """Replies in character; with `rate` (they're talking to the bot) it also updates its opinion of them and
+        may give nice-to-the-bot aura, using the AI's read of their message."""
+        bonus = 0
         history = self.history[message.channel.id]
         name = message.guild.me.display_name
         try:
@@ -475,11 +478,13 @@ class SpamGuard(discord.Client):
                 chatter = self.chatter if in_chat_channel else (self.mention_chatter or self.chatter)
                 images = await images_in(message) if chatter.sees_images else []
                 elsewhere = [(ch, said) for cid, ch, said in self.recent_replies if cid != message.channel.id][-8:]
-                text = await chatter.chat(
+                text, tone = await chatter.chat_and_tone(
                     name, PERSONA, list(history)[-CHAT_CONTEXT_MESSAGES:], speaker(message.author),
                     images=images, elsewhere=elsewhere, quotes=self.store.quotes_by(message.guild.id, message.author.id),
-                    opinion=rep.opinion(self.store, message.author),
+                    opinion=rep.opinion(self.store, message.author), rate_tone=rate,
                 )
+            if rate:
+                bonus = self.react_to(message, message.clean_content, tone)
             if not text:
                 if bonus:
                     await self.thank(message, bonus)

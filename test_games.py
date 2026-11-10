@@ -139,6 +139,47 @@ class RepTests(unittest.TestCase):
         store.add_rep(1, 6, -30, "rude", "stfu", 0)
         self.assertEqual(store.rep_ranking(1), [(5, 70), (6, -30)])
 
+    def test_slang_fallback(self):
+        import rep
+        for text in ["ty twin", "fr twin", "ts tuff", "ur tuff", "u got mad aura", "+500 aura", "im crine", "ur him", "fw u heavy"]:
+            self.assertTrue(aura.is_nice(text) and not rep.is_rude(text), text)
+        for text in ["ur mid", "ur cooked", "ur chopped", "u got no aura", "-1000 aura", "i mog you", "stop larping",
+                     "ur a bum", "who asked", "L bot"]:
+            self.assertTrue(rep.is_rude(text), text)
+        for text in ["this game is fire", "ben is cooked lol", "is ts mid or nah", "whats the score"]:
+            self.assertFalse(aura.is_nice(text) or rep.is_rude(text), text)
+
+    def test_ai_tone_tag(self):
+        from judge import split_tone
+        self.assertEqual(split_tone("lol ok twin\n[nice]"), ("lol ok twin", "nice"))
+        self.assertEqual(split_tone("nah ur cooked [Rude]."), ("nah ur cooked", "rude"))
+        self.assertEqual(split_tone("what"), ("what", None))
+        self.assertEqual(split_tone("[neutral]"), (None, "neutral"))
+        self.assertEqual(split_tone("[loud] ur aura just died"), ("ur aura just died", None), "made-up tags go too")
+
+    def test_chat_reads_tone_in_the_same_call(self):
+        from test_features import StubJudge
+        judge = StubJudge("bet twin\n[nice]")
+        text, tone = asyncio.run(judge.chat_and_tone("S", "p", [("ben", "ts tuff")], "ben", rate_tone=True))
+        self.assertEqual((text, tone), ("bet twin", "nice"))
+        self.assertEqual(len(judge.requests), 1, "no extra AI call")
+        self.assertIn("[rude]", judge.requests[0][0])
+        plain = StubJudge("bet twin\n[nice]")
+        text, tone = asyncio.run(plain.chat_and_tone("S", "p", [("ben", "hi")], "ben"))
+        self.assertEqual((text, tone), ("bet twin", None), "tag stripped even when it wasn't asked for")
+        self.assertNotIn("[rude]", plain.requests[0][0])
+
+    def test_slang_list_first_then_the_ai(self):
+        import rep
+        store, ben = temp_store(), person(5, "ben")
+        self.assertEqual(rep.react(store, ben, "u lowk saved me there", now=0, tone="nice"), 3, "AI covers unknown wording")
+        self.assertEqual(rep.react(store, ben, "thanks", now=1000, tone="rude"), 3, "the slang list wins when it knows")
+        self.assertEqual(rep.react(store, ben, "whats up", now=2000, tone="neutral"), 0)
+        self.assertGreater(aura.nice_aura(temp_store(), ben, "u lowk saved me there", now=0, roll=lambda: 0, tone="nice"), 0)
+        self.assertEqual(aura.nice_aura(temp_store(), ben, "ok whatever", now=0, roll=lambda: 0, tone="neutral"), 0)
+        self.assertEqual(aura.nice_aura(temp_store(), ben, "ur cooked", now=0, roll=lambda: 0, tone="nice"), 0,
+                         "the AI can't call a known put-down nice")
+
     def test_chat_prompt_gets_the_opinion(self):
         from test_features import StubJudge
         judge = StubJudge("yo")

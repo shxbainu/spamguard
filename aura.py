@@ -62,17 +62,27 @@ FALLBACK = {
 NICE_CHANCE = float(os.getenv("NICE_AURA_CHANCE") or 0.75)
 NICE_POINTS = (10, 25)
 NICE_COOLDOWN_MINUTES = int(os.getenv("NICE_AURA_COOLDOWN_MINUTES") or 30)
+# Fallback for when the chat AI isn't answering (normally it reads the tone itself, with the personality and slang
+# in front of it). Includes the group's slang: tuff, twin, aura, mog and the like.
+YOU = r"(?:you'?re|youre|ur|u r|you are|u|you)"
 NICE = re.compile(
-    r"\b(?:thanks?|thank (?:you|u|ya)|ty(?:sm|vm)?|thx|thnx|appreciate (?:it|you|u|ya|that)|ily|i love (?:you|u|ya)|"
-    r"love (?:you|u|ya)|good bot|best bot|w bot|goat(?:ed)?|(?:you'?re|youre|ur|u r|you are) (?:so |really |actually |lowk(?:ey)? )?"
-    r"(?:the best|the goat|goated|funny|smart|cool|nice|sweet|great|awesome|amazing|based|right|hilarious|a legend|valid)|"
-    r"you'?re? right|ur right|well said|you'?re? the man|legend)\b",
+    r"\b(?:thanks?|thank (?:you|u|ya)|ty(?:sm|vm)?|thx|thnx|tysm|appreciate (?:it|you|u|ya|that)|ily|i love (?:you|u|ya)|"
+    r"love (?:you|u|ya)|(?:good|best|w|goated|tuff) bot|goat(?:ed)?|"
+    rf"{YOU} (?:so |really |actually |lowk |deadass |lowkey )?"
+    r"(?:the best|the goat|goated|funny|smart|cool|nice|sweet|great|awesome|amazing|based|right|hilarious|a legend|"
+    r"valid|tuff|him|that guy|a real one|my twin|twin|built different|cracked|elite)|"
+    r"you'?re? right|ur right|well said|you'?re? the man|legend|"
+    r"(?:fr|ty|thanks|ily|love u|real|valid|w|based) twin|"  # twin is only for people you like
+    r"ts (?:is )?(?:so )?tuff|(?:so|hella|lowk) tuff|"
+    rf"(?:infinite|unlimited|max|so much|mad|crazy|big) aura|{YOU} (?:got|have|has) (?:so much |mad |crazy )?aura|"
+    rf"{YOU} mog|you mog|im crine|i'?m crying|lmao(?:o+)? (?:ur|you'?re) funny|ur jokes? (?:are|is) (?:tuff|funny|fire)|"
+    r"fw (?:you|u)(?: heavy)?)\b|(?<!\w)\+\s?\d+\s?aura\b",
     re.IGNORECASE,
 )
 # Sarcasm and backhanded lines that would otherwise match.
 NOT_NICE = re.compile(
-    r"\b(?:for nothing|no thanks?|not|never|nvm|jk|/s|stupid|dumb|trash|garbage|sucks?|hate|useless|worst|shut up|stfu|"
-    r"idiot|clanker|mid|annoying|but)\b",
+    r"\b(?:for nothing|no thanks?|not|never|nvm|jk|stupid|dumb|trash|garbage|sucks?|hate|useless|worst|shut up|stfu|"
+    r"idiot|clanker|mid|annoying|but|cooked|chopped|no aura|negative aura|bum|larp(?:ing|er)?)\b|/s\b|-\s?\d*\s?aura",
     re.IGNORECASE,
 )
 NICE_FALLBACK = ["appreciate u", "ok ur cool", "finally someone nice", "u good fr", "ok i fw u"]
@@ -83,10 +93,14 @@ def is_nice(text: str) -> bool:
     return bool(NICE.search(text)) and not NOT_NICE.search(text)
 
 
-def nice_aura(store, member: discord.Member, text: str, now: float | None = None, roll=random.random) -> int:
-    """Aura for being nice to the bot (0 if it isn't nice, they got some recently, or the roll misses). Any nice
+def nice_aura(store, member: discord.Member, text: str, now: float | None = None, roll=random.random,
+              tone: str | None = None) -> int:
+    """Aura for being nice to the bot (0 if it isn't nice, they got some recently, or the roll misses). `tone` is
+    the chat AI's read of the message ("nice", "rude" or "neutral"); without one the wording decides. Any nice
     message starts the cooldown, so spamming "thanks" doesn't beat the odds."""
-    if not AURA_ENABLED or not is_nice(text):
+    # The group's slang list is more reliable on what it knows; the AI's read covers wording it doesn't.
+    nice = is_nice(text) or (tone == "nice" and not NOT_NICE.search(text))
+    if not AURA_ENABLED or not nice:
         return 0
     now = time.time() if now is None else now
     key = f"nice:{member.guild.id}:{member.id}"

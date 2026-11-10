@@ -1,6 +1,7 @@
 """Reputation with the bot: a score from -100 to 100 for how the bot feels about each person. Being nice to it
 (thanks, compliments) raises it, being rude to it lowers it, and the bot's chat replies get warmer or colder to
-match. It's worked out from the wording, so it costs no AI calls. /rep shows anyone's score."""
+match. When the bot replies, the chat AI reads the tone in the same call (with the personality and slang in front
+of it); otherwise the wording decides. Either way it costs no extra AI calls. /rep shows anyone's score."""
 from __future__ import annotations
 
 import os
@@ -22,12 +23,18 @@ NICE_REP, RUDE_REP = 3, -5
 # At most one change per person in this many seconds, so spamming either way doesn't swing it.
 REP_COOLDOWN_SECONDS = 120
 
+# Fallback for when the chat AI isn't answering (normally it reads the tone itself, with the personality and slang
+# in front of it). Includes the group's slang: mid, cooked, chopped, bum, larp, no aura and the like.
+YOU = r"(?:you'?re|youre|ur|u r|you are|u|you)"
 RUDE = re.compile(
-    r"\b(?:stfu|shut (?:the fuck |tf )?up|clanker|(?:dumb|stupid|bad|trash|useless|worst|mid) (?:ass )?bot|"
-    r"(?:you'?re|youre|ur|u r|you are|ur so|you'?re so) (?:so |really |actually )?"
-    r"(?:dumb|stupid|trash|garbage|mid|annoying|useless|bad|ass|cooked|a clown|an idiot|so dumb)|"
-    r"i hate (?:you|u)|nobody asked|kys|fuck (?:you|u|off)|screw (?:you|u)|go away|get lost|ur not funny|"
-    r"you'?re not funny|not funny)\b",
+    r"\b(?:stfu|shut (?:the fuck |tf )?up|clanker|(?:dumb|stupid|bad|trash|useless|worst|mid|cooked|chopped|l) (?:ass )?bot|"
+    rf"{YOU} (?:so |really |actually |lowk |deadass |lowkey |hella )?"
+    r"(?:dumb|stupid|trash|garbage|mid|annoying|useless|bad|ass|cooked|chopped|a clown|an idiot|a bum|bum|an npc|npc|"
+    r"slow|not funny|not tuff|lame|weird|corny|washed)|"
+    rf"{YOU} (?:got|have|has) (?:no|negative|zero|0) aura|no aura|negative aura|"
+    rf"i mog (?:you|u)|stop larp(?:ing)?|{YOU} larp(?:ing)?|"
+    r"i hate (?:you|u)|deadass i hate|nobody asked|who asked|kys|fuck (?:you|u|off)|screw (?:you|u)|go away|get lost|"
+    r"ratio|not funny)\b|(?<!\w)-\s?\d+\s?aura\b",
     re.IGNORECASE,
 )
 
@@ -52,11 +59,13 @@ def level(score: int) -> tuple[str, str]:
     return LEVELS[-1][1], LEVELS[-1][2]
 
 
-def react(store, member: discord.Member, text: str, now: float | None = None) -> int:
-    """Moves the bot's opinion of someone who's talking to it, if they were nice or rude; returns the change."""
+def react(store, member: discord.Member, text: str, now: float | None = None, tone: str | None = None) -> int:
+    """Moves the bot's opinion of someone who's talking to it, if they were nice or rude; returns the change.
+    `tone` is the chat AI's read of the message ("nice", "rude" or "neutral"); without one the wording decides."""
     if not REP_ENABLED:
         return 0
-    change = RUDE_REP if is_rude(text) else NICE_REP if is_nice(text) else 0
+    # The group's slang list is more reliable on what it knows; the AI's read covers wording it doesn't.
+    change = RUDE_REP if is_rude(text) else NICE_REP if is_nice(text) else {"nice": NICE_REP, "rude": RUDE_REP}.get(tone, 0)
     if not change:
         return 0
     now = time.time() if now is None else now

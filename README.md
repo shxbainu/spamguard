@@ -222,7 +222,7 @@ Winning a `/debate` is +100 each, and a message fact-checked as false is −100 
 
 Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated, except being nice to the bot.
 
-**Being nice to the bot:** thanking it or complimenting it ("ty", "good bot", "ur funny") in a mention, a reply to it, or the chat channel has a 75% chance (`NICE_AURA_CHANCE`) of earning +10 to +25, at most once every 30 minutes (`NICE_AURA_COOLDOWN_MINUTES`). It's spotted from the wording, so it costs no AI tokens; sarcasm like "thanks for nothing" or "thanks but ur dumb" doesn't count, and every nice message starts the cooldown, so spamming "thanks" doesn't beat the odds. The points are tacked onto the bot's reply. Turn it off with `AURA_ENABLED=false`.
+**Being nice to the bot:** thanking it or complimenting it ("ty", "good bot", "ur funny") in a mention, a reply to it, or the chat channel has a 75% chance (`NICE_AURA_CHANCE`) of earning +10 to +25, at most once every 30 minutes (`NICE_AURA_COOLDOWN_MINUTES`). It's spotted the same way as reputation (the slang list, then the chat AI's read), so it costs no extra AI calls; sarcasm like "thanks for nothing" or "thanks but ur dumb" doesn't count, and every nice message starts the cooldown, so spamming "thanks" doesn't beat the odds. The points are tacked onto the bot's reply. Turn it off with `AURA_ENABLED=false`.
 
 ### Fact check
 
@@ -276,7 +276,13 @@ Set `CASINO_CHANNEL_ID` to keep the games in one channel. `/aura check` shows so
 
 ### Reputation with the bot
 
-The bot keeps a score from **-100 to 100** for how it feels about each person, and `/rep` shows it with the last few things that moved it. Being nice to it ("ty", "good bot", "ur funny") is +3; being rude ("stfu", "clanker", "ur so dumb", "nobody asked") is -5. It only counts messages aimed at the bot (a mention, a reply to it, or the chat channel), at most one change per person every 2 minutes. Its chat replies follow the score: warmer with people it likes, colder and shorter with people it doesn't, and now and then it brings up the last rude thing you said. It's worked out from the wording, so it uses no extra AI calls (just a line added to the chat prompt). Turn it off with `REP_ENABLED=false`.
+The bot keeps a score from **-100 to 100** for how it feels about each person, and `/rep` shows it with the last few things that moved it. Being nice to it is +3; being rude is -5. It only counts messages aimed at the bot (a mention, a reply to it, or the chat channel), at most one change per person every 2 minutes. Its chat replies follow the score: warmer with people it likes, colder and shorter with people it doesn't, and now and then it brings up the last rude thing you said.
+
+How it tells nice from rude, in order:
+1. **The group's slang list** (in `aura.py` and `rep.py`): "ty twin", "ur tuff", "u got mad aura", "im crine" are nice; "ur mid", "ur cooked", "chopped", "washed", "stop larping", "u got no aura", "clanker", "who asked" are rude; sarcasm like "thanks for nothing" is rude.
+2. **The chat AI**, for wording the list doesn't know ("u lowk saved me"): when the bot replies, the same AI call that writes the reply tags the message as nice, rude or neutral first, reading it with the personality and slang in front of it. No extra call, a few tokens. In live tests it was right on new phrasings but inconsistent on slang, which is why the list goes first.
+
+The same check decides nice-to-the-bot aura. Turn reputation off with `REP_ENABLED=false`.
 
 ### Daily prediction
 
