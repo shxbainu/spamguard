@@ -1,6 +1,6 @@
 """SQLite storage: punishment history, offense counts, /shutup uses, a rolling log of what the bot saw and
-decided (checked messages, its replies and rulings) for the dashboard, the quote book, aura points, and when the
-grass-check person was online or playing games."""
+decided (checked messages, its replies and rulings) for the dashboard, the quote book, aura points, the bot's opinion of each person,
+and when the grass-check person was online or playing games."""
 from __future__ import annotations
 
 import sqlite3
@@ -99,10 +99,21 @@ CREATE TABLE IF NOT EXISTS inventory (
     count INTEGER NOT NULL,
     PRIMARY KEY (guild_id, user_id, item)
 );
+CREATE TABLE IF NOT EXISTS rep (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at REAL NOT NULL,
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    change INTEGER NOT NULL,         -- how much the bot's opinion of them moved
+    score INTEGER NOT NULL,          -- their reputation with the bot afterwards (-100 to 100)
+    reason TEXT NOT NULL,            -- nice or rude
+    message TEXT
+);
+CREATE INDEX IF NOT EXISTS rep_user ON rep (guild_id, user_id, created_at);
 """
 
 # Aura kinds from the casino; /aura check leaves them out of someone's recent history so it shows what they did.
-GAME_KINDS = ("coinflip", "slots", "blackjack", "higherlower", "roulette", "duel")
+GAME_KINDS = ("coinflip", "slots", "blackjack", "higherlower", "roulette", "duel", "predict")
 # Kinds earned from a message (the per-person cooldown only looks at these).
 MESSAGE_KINDS = ("comeback", "callout", "false_claim", "bad_take")
 
@@ -411,6 +422,88 @@ class Store:
     def prune_presence(self, now: float, days: float = 30) -> None:
         self.db.execute("DELETE FROM presence WHERE ended < ?", (now - days * 86400,))
         self.db.commit()
+
+    # ---- what happened on a day (daily prediction and headline) ------------------
+
+    def punishments_between(self, guild_id: int, since: float, until: float) -> int:
+        """Timeouts and kicks by moderation (not /shutup, not failed attempts) in that time."""
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM punishments WHERE guild_id = ? AND created_at >= ? AND created_at < ? "
+            "AND action != 'failed' AND category != 'shutup'",
+            (guild_id, since, until),
+        ).fetchone()
+        return row[0]
+
+    def punishment_rows_between(self, guild_id: int, since: float, until: float) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM punishments WHERE guild_id = ? AND created_at >= ? AND created_at < ? AND action != 'failed' "
+            "ORDER BY created_at",
+            (guild_id, since, until),
+        )
+        return [dict(row) for row in rows]
+
+    def biggest_moment_between(self, guild_id: int, since: float, until: float) -> int:
+        """The biggest single aura gain or loss from a message in that time (signed), or 0."""
+        row = self.db.execute(
+            f"SELECT points FROM aura WHERE guild_id = ? AND created_at >= ? AND created_at < ? "
+            f"AND kind IN ({', '.join('?' * len(MESSAGE_KINDS))}) ORDER BY ABS(points) DESC LIMIT 1",
+            (guild_id, since, until, *MESSAGE_KINDS),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def worst_casino_day_between(self, guild_id: int, since: float, until: float) -> int:
+        """The worst anyone did in the casino in that time (most negative total), or 0."""
+        row = self.db.execute(
+            f"SELECT MIN(total) FROM (SELECT SUM(points) AS total FROM aura WHERE guild_id = ? AND created_at >= ? "
+            f"AND created_at < ? AND kind IN ({', '.join('?' * len(GAME_KINDS))}) GROUP BY user_id)",
+            (guild_id, since, until, *GAME_KINDS),
+        ).fetchone()
+        return min(0, row[0] or 0)
+
+    def aura_between(self, guild_id: int, since: float, until: float) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM aura WHERE guild_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at",
+            (guild_id, since, until),
+        )
+        return [dict(row) for row in rows]
+
+    # ---- reputation with the bot ------------------------------------------------
+
+    def rep_score(self, guild_id: int, user_id: int) -> int:
+        row = self.db.execute(
+            "SELECT score FROM rep WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            (guild_id, user_id),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def add_rep(self, guild_id: int, user_id: int, change: int, reason: str, message: str | None, now: float,
+                low: int = -100, high: int = 100) -> int:
+        """Moves someone's reputation (kept between `low` and `high`); returns the new score."""
+        score = max(low, min(high, self.rep_score(guild_id, user_id) + change))
+        self.db.execute(
+            "INSERT INTO rep (created_at, guild_id, user_id, change, score, reason, message) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (now, guild_id, user_id, change, score, reason, message),
+        )
+        self.db.commit()
+        return score
+
+    def rep_history(self, guild_id: int, user_id: int, limit: int = 5, reason: str | None = None) -> list[dict]:
+        query, args = "SELECT * FROM rep WHERE guild_id = ? AND user_id = ?", [guild_id, user_id]
+        if reason:
+            query += " AND reason = ?"
+            args.append(reason)
+        rows = self.db.execute(query + " ORDER BY created_at DESC, id DESC LIMIT ?", (*args, limit))
+        return [dict(row) for row in rows]
+
+    def rep_ranking(self, guild_id: int) -> list[tuple[int, int]]:
+        """(user id, score) for everyone the bot has an opinion of, best first."""
+        rows = self.db.execute(
+            "SELECT user_id, score FROM rep r WHERE guild_id = ? AND id = "
+            "(SELECT id FROM rep WHERE guild_id = r.guild_id AND user_id = r.user_id ORDER BY created_at DESC, id DESC LIMIT 1) "
+            "ORDER BY score DESC",
+            (guild_id,),
+        )
+        return [(row[0], row[1]) for row in rows]
 
     def get_state(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()

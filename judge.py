@@ -799,11 +799,12 @@ class Judge:
 
     async def chat(
         self, name: str, persona: str, history: list[tuple[str, str]], author: str,
-        images: list = (), elsewhere: list[tuple[str, str]] = (), quotes: list[str] = (),
+        images: list = (), elsewhere: list[tuple[str, str]] = (), quotes: list[str] = (), opinion: str | None = None,
     ) -> str | None:
         """An in-character reply to the last message in `history`, or None if the model couldn't be reached.
         `images` are pictures in (or replied to by) that message; `elsewhere` is (channel, text) of the bot's recent
-        replies in other channels, so it stays consistent across the server."""
+        replies in other channels, so it stays consistent across the server; `opinion` is how the bot feels about
+        the person it's answering."""
         system = CHAT_PROMPT.format(name=name, persona=persona, slang=SLANG)
         if elsewhere:
             said = "\n".join(f"- #{channel}: {text[:200]}" for channel, text in elsewhere)
@@ -815,6 +816,8 @@ class Judge:
                 f"these; bring one up only when it fits what they're saying right now perfectly, like when they "
                 f"contradict it:\n{saved}"
             )
+        if opinion:
+            system += f"\n\n{opinion}"
         turns = build_chat_turns(history, name)
         recent = [text for speaker, text in history if speaker == name][-3:]
         max_tokens = CHAT_TOKENS.get(getattr(self, "effort", None), 768)

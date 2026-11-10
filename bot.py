@@ -22,6 +22,9 @@ import casino
 import debate
 import duels
 import factcheck
+import news
+import predict
+import rep
 import shop
 from cards import LOSS, card
 from dashboard import start_dashboard
@@ -229,6 +232,8 @@ class SpamGuard(discord.Client):
         self._dashboard = None
         self._status_task: asyncio.Task | None = None
         self.grass = GrassWatcher(self)
+        self.predictions = predict.Predictions(self)
+        self.news = news.DailyNews(self)
         self.last_factcheck: dict[int, float] = {}  # user id -> monotonic time of their last fact-check
         self._shop_task: asyncio.Task | None = None
 
@@ -238,7 +243,7 @@ class SpamGuard(discord.Client):
         for command in (
             spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
             debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
-            *casino.COMMANDS, *duels.COMMANDS, *shop.COMMANDS,
+            *casino.COMMANDS, *duels.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
         ):
             self.tree.add_command(command)
         if GUILD_ID:
@@ -258,6 +263,8 @@ class SpamGuard(discord.Client):
         if self._status_task:
             self._status_task.cancel()
         self.grass.stop()
+        self.predictions.stop()
+        self.news.stop()
         if self._dashboard:
             await self._dashboard.cleanup()
         await super().close()
@@ -282,6 +289,8 @@ class SpamGuard(discord.Client):
         if STATUSES and not self._status_task:  # on_ready runs again after reconnects
             self._status_task = asyncio.create_task(self.rotate_statuses())
         self.grass.start()
+        self.predictions.start()
+        self.news.start()
         if not self._shop_task:
             self._shop_task = asyncio.create_task(shop.undo_expired(self))
 
@@ -350,6 +359,7 @@ class SpamGuard(discord.Client):
         if (running := debate.by_thread.get(message.channel.id)) is not None:
             await debate.on_thread_message(running, message)  # debate threads have their own rules
             return
+        self.predictions.count(message)
         text = message.clean_content
         is_gif = looks_like_gif(
             text,
@@ -418,9 +428,12 @@ class SpamGuard(discord.Client):
         return in_chat_channel and not others
 
     def nice_bonus(self, message: discord.Message, text: str, in_chat_channel: bool) -> int:
-        """Aura for being nice to the bot, if they were and the roll hits (0 otherwise)."""
+        """Updates the bot's opinion of someone talking to it, and returns aura for being nice to it if the roll
+        hits (0 otherwise)."""
         if not self.talking_to_bot(message, in_chat_channel) or self.remaining_penalty(message.guild.id, message.author.id):
             return 0
+        if change := rep.react(self.store, message.author, text):
+            log.info("Rep: %s %+d (%r)", message.author, change, text[:80])
         points = aura.nice_aura(self.store, message.author, text)
         if points:
             log.info("Nice to the bot: %s +%d aura (%r)", message.author, points, text[:80])
@@ -465,6 +478,7 @@ class SpamGuard(discord.Client):
                 text = await chatter.chat(
                     name, PERSONA, list(history)[-CHAT_CONTEXT_MESSAGES:], speaker(message.author),
                     images=images, elsewhere=elsewhere, quotes=self.store.quotes_by(message.guild.id, message.author.id),
+                    opinion=rep.opinion(self.store, message.author),
                 )
             if not text:
                 if bonus:

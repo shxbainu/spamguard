@@ -103,6 +103,49 @@ class NiceTests(unittest.TestCase):
         self.assertFalse(talking(), "a normal channel without a mention")
 
 
+class RepTests(unittest.TestCase):
+    def test_rude_and_nice(self):
+        import rep
+        for text in ["stfu", "shut up bot", "clanker", "ur so dumb", "dumb bot", "i hate u", "nobody asked", "ur not funny"]:
+            self.assertTrue(rep.is_rude(text), text)
+        for text in ["thanks", "good bot", "what time is it", "this game is dumb"]:
+            self.assertFalse(rep.is_rude(text), text)
+
+    def test_score_moves_with_cooldown_and_limits(self):
+        import rep
+        store, ben = temp_store(), person(5, "ben")
+        self.assertEqual(rep.react(store, ben, "thanks", now=0), 3)
+        self.assertEqual(rep.react(store, ben, "ty", now=10), 0, "cooldown")
+        self.assertEqual(rep.react(store, ben, "what's up", now=1000), 0, "neither")
+        self.assertEqual(rep.react(store, ben, "thanks but ur dumb", now=1000), -5, "rude wins over nice")
+        self.assertEqual(store.rep_score(1, 5), -2)
+        for i in range(40):
+            rep.react(store, ben, "stfu clanker", now=2000 + i * 200)
+        self.assertEqual(store.rep_score(1, 5), -100, "never below -100")
+        self.assertIn("can't stand", rep.opinion(store, ben))
+        self.assertIn("stfu clanker", rep.opinion(store, ben), "remembers what bugged it")
+
+    def test_levels_and_opinion(self):
+        import rep
+        store, ben = temp_store(), person(5, "ben")
+        self.assertIsNone(rep.opinion(store, ben), "neutral says nothing")
+        store.add_rep(1, 5, 70, "nice", "ur the goat", 0)
+        self.assertIn("genuinely like", rep.opinion(store, ben))
+        self.assertEqual(rep.level(0)[1], "😐 Neutral")
+        self.assertEqual(rep.level(-20)[1], "😒 Annoyed")
+        self.assertEqual(rep.level(25)[1], "🙂 Likes them")
+        self.assertEqual(rep.bar(-100), "▱" * 10)
+        self.assertEqual(rep.bar(100), "▰" * 10)
+        store.add_rep(1, 6, -30, "rude", "stfu", 0)
+        self.assertEqual(store.rep_ranking(1), [(5, 70), (6, -30)])
+
+    def test_chat_prompt_gets_the_opinion(self):
+        from test_features import StubJudge
+        judge = StubJudge("yo")
+        asyncio.run(judge.chat("S", "p", [("ben", "hi")], "ben", opinion="How you feel about ben right now: cold."))
+        self.assertIn("How you feel about ben", judge.requests[0][0])
+
+
 class DuelLogicTests(unittest.TestCase):
     def test_split_or_steal(self):
         self.assertEqual(duels.split_steal_payouts("split", "split", 100)[:2], (125, 125))

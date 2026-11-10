@@ -195,7 +195,10 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/grass` | How long the grass-check person has been on Discord and gaming today. |
 | Right-click a message → **Apps → Fact check**, or `/factcheck claim` | A formal fact-check with a rating and web sources. |
 | `/coinflip` `/slots` `/roulette` `/blackjack` `/higherlower` | Casino games; bet aura. |
-| `/duel @user bet` | You both bet the same aura; winner takes all. |
+| `/duel @user bet [game]` | You both bet the same aura and play quick draw, 10 seconds, split or steal, or pure luck. |
+| `/daily` | Free aura once a day. |
+| `/predict [yes/no] [bet]` | Bet on today's yes/no question (pays 2x), or see it. |
+| `/rep [user]` | How the bot feels about someone, from -100 to 100. |
 | `/give @user amount` | Give someone aura. |
 | `/shop` / `/buy item` | Spend aura: extra or 1-minute /shutups, a shutup shield, renaming someone, a roast, the bot's status. |
 | `/shutup @user long:True` | Uses a 1-minute /shutup you bought. Bought regular ones are used automatically after your weekly 3. |
@@ -270,6 +273,21 @@ Shop (`/shop` to see it, `/buy` to spend):
 | `status` | 750 | Set the bot's status for an hour (`/buy status text`) |
 
 Set `CASINO_CHANNEL_ID` to keep the games in one channel. `/aura check` shows someone's casino winnings or losses, items and shield; the casino doesn't fill up their aura history.
+
+### Reputation with the bot
+
+The bot keeps a score from **-100 to 100** for how it feels about each person, and `/rep` shows it with the last few things that moved it. Being nice to it ("ty", "good bot", "ur funny") is +3; being rude ("stfu", "clanker", "ur so dumb", "nobody asked") is -5. It only counts messages aimed at the bot (a mention, a reply to it, or the chat channel), at most one change per person every 2 minutes. Its chat replies follow the score: warmer with people it likes, colder and shorter with people it doesn't, and now and then it brings up the last rude thing you said. It's worked out from the wording, so it uses no extra AI calls (just a line added to the chat prompt). Turn it off with `REP_ENABLED=false`.
+
+### Daily prediction
+
+Every day at `PREDICT_OPEN` (10:00) the bot posts one yes/no question in `PREDICT_CHANNEL_ID` (default: the casino channel, else the chat channel). Bet with `/predict yes 100` (once a day, up to `PREDICT_MAX_BET`, 500) until `PREDICT_CLOSE` (18:00); at `PREDICT_SETTLE` (23:30) it posts the answer and right bets pay 2x. Times use `GRASS_TIMEZONE`.
+
+- **About the server** (no AI at all, settled from the bot's own records): will the server send more than N messages today (N from yesterday), will the bot time anyone out, will anyone gain or lose 100+ aura from one message, will anyone lose 1,000+ in the casino.
+- **Sports or news** (`PREDICT_WORLD_CHANCE`, half the days): only when the `/settleargument` model can search the web (Gemini). One search writes the question, one checks the result that night. Without real search results it falls back to a server question, and if the result can't be confirmed every bet goes back.
+
+### The Daily Aura
+
+At `NEWS_TIME` (22:00) the bot posts a tabloid front page in `NEWS_CHANNEL_ID` (default: the chat channel) about what really happened that day: big aura moments, casino wins and losses of 500+, timeouts. If fewer than `NEWS_MIN_EVENTS` (3) notable things happened, it posts nothing and makes no AI call. Otherwise it's one call to the chat model. Turn it off with `NEWS_ENABLED=false`.
 
 ### Debates
 
@@ -368,4 +386,8 @@ python -m unittest -v
 - `escalation.py`: the punishment ladder
 - `judge.py`: everything that talks to the AI (Gemini, Groq, OpenRouter or Claude): the "is this contributing?" check, argument settling and chat
 - `storage.py`: SQLite history, offense counts and /shutup uses
+- `aura.py`, `casino.py`, `duels.py`, `shop.py`: aura, the casino, duels and the shop
+- `rep.py`: reputation with the bot
+- `predict.py`: the daily prediction
+- `news.py`: the Daily Aura
 - `dashboard.py`, `dashboard.html`: the web dashboard
