@@ -244,16 +244,15 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
 | `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
 | `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot (riskier guesses grow it more), cash out any time, one wrong guess loses it |
-| `/duel @user bet game` | Both bet the same and play for the pot (default: a random game) |
+| `/duel @user bet game` | Both bet the same and play for the pot (default: a random one of the first three below) |
 | `/daily` | Free aura once a day (more for days in a row) |
 
 Duel games:
 
 | Game | How it works |
 |---|---|
-| 🔥 Roast battle | Each player gets one message to roast the other; the AI (the `/settleargument` model) picks the better roast. Those messages skip moderation. Roast alone and you win; if the AI can't be reached, both bets go back |
-| 🗣️ Who said it | A line from the quote book; first to tap who said it wins, a wrong tap knocks you out. Needs quotes from at least 3 people |
-| 🧨 Chicken | A hidden fuse (6–30 s). Bail first and you keep half your bet while the other gets the rest; nobody bails and you both lose everything |
+| 🤠 Quick draw | Wait for **DRAW!**, then hit the button first; clicking early loses |
+| ⏱️ 10 seconds | A hidden clock starts; hit **Stop** when you think 10 seconds have passed, closest wins. Timing starts once Discord has the message and each click counts when it reaches the bot, so both players lose the same network delay |
 | 🤝 Split or steal | Pick in secret. Both split: each gets their bet back plus 25%. One steals: they take the pot. Both steal: both lose it. Not picking counts as split |
 | 🎲 Pure luck | 50/50 |
 

@@ -362,8 +362,7 @@ class SpamGuard(discord.Client):
         history.append(history_line(message, is_gif))
 
         in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
-        racing = (message.channel.id, message.author.id) in duels.busy  # unscramble guesses aren't chat
-        if not in_chat_channel and not racing:  # the AI chat channel is for messing around, so it isn't moderated
+        if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
             await self.moderate(message, text, is_gif, context)
         bonus = self.nice_bonus(message, text, in_chat_channel)
         if self.wants_reply(message, in_chat_channel):

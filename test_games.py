@@ -1,6 +1,7 @@
 """Tests for /daily, aura for being nice to the bot, and the duel games."""
 import asyncio
 import random
+import time
 import unittest
 import unittest.mock
 from types import SimpleNamespace
@@ -109,22 +110,10 @@ class DuelLogicTests(unittest.TestCase):
         self.assertEqual(duels.split_steal_payouts("split", "steal", 100)[:2], (0, 200))
         self.assertEqual(duels.split_steal_payouts("steal", "steal", 100)[:2], (0, 0))
 
-    def test_chicken_pot_adds_up(self):
-        self.assertEqual(duels.chicken_payouts(101), (50, 152))
-
-    def test_quote_round_needs_three_people(self):
-        store = temp_store()
-        a, b = person(5, "ben"), person(6, "kai")
-        add = lambda author, name, text, msg: store.add_quote(
-            guild_id=1, channel_id=2, message_id=msg, said_at=0.0, author_id=author, author_name=name, content=text,
-            has_image=False, saved_by_id=9, saved_by_name="x")
-        add(5, "ben", "fortnite is a sport", 1)
-        self.assertIsNone(duels.quote_round(store, 1, (a, b)), "only two people to pick from")
-        add(8, "luke", "grass is overrated", 2)
-        quote, choices = duels.quote_round(store, 1, (a, b), random.Random(3))
-        self.assertIn(quote["author_id"], [i for i, _ in choices])
-        self.assertEqual(len(choices), 3)
-        self.assertEqual(len({i for i, _ in choices}), 3)
+    def test_ten_seconds_closest_wins(self):
+        self.assertEqual(duels.ten_seconds_result({5: 9.7, 6: 10.4})[0], 5)
+        self.assertEqual(duels.ten_seconds_result({5: 11.0, 6: 9.2})[0], 6)
+        self.assertIsNone(duels.ten_seconds_result({5: 9.5, 6: 10.5})[0], "exact tie")
 
 
 class DuelGameTests(unittest.TestCase):
@@ -180,89 +169,59 @@ class DuelGameTests(unittest.TestCase):
         self.run_game(duels.SplitOrSteal, steps)
         self.assertEqual(self.totals(), (1025, 1025))
 
-    def test_chicken_bail_and_boom(self):
+    def test_quick_draw_early_click_loses(self):
         async def steps(game):
-            game.fuse = 999
-            await game.bail.callback(press(self.a))
-            return game
-        game, _ = self.run_game(duels.Chicken, steps)
-        self.assertEqual(self.totals(), (950, 1050), "bailer keeps half, the other gets the rest")
-
-        self.setUp()
-        async def boom(game):
-            game.fuse = 0
-            await game.burn()
-            return game
-        game, _ = self.run_game(duels.Chicken, boom)
-        self.assertEqual(self.totals(), (900, 900), "both lose")
-        self.assertIn("BOOM", game.message.edits[-1]["embed"].description)
-
-    def test_who_said_it(self):
-        add = lambda author, name, text, msg: self.store.add_quote(
-            guild_id=1, channel_id=2, message_id=msg, said_at=0.0, author_id=author, author_name=name, content=text,
-            has_image=False, saved_by_id=9, saved_by_name="x")
-        add(8, "luke", "grass is overrated", 1)
-        self.assertIsNone(duels.WhoSaidIt.available(self.store, 1, (self.a, self.b)))
-
-        async def steps(game):
-            wrong = [item for item in game.children if item.label != "luke"]
-            right = next(item for item in game.children if item.label == "luke")
-            await wrong[0].callback(press(self.a))
-            locked = press(self.a)
-            await right.callback(locked)
-            self.assertIn("already guessed wrong", locked.response.sent[0])
-            click = press(self.b)
-            await right.callback(click)
+            click = press(self.a)
+            await game.trigger.callback(click)
             return click
-        _, click = self.run_game(duels.WhoSaidIt, steps)
+        _, click = self.run_game(duels.QuickDraw, steps)
         self.assertIn("kai wins", last_title(click.response.edits[0]["embed"]))
         self.assertEqual(self.totals(), (900, 1100))
 
-    def test_roast_battle(self):
-        class Judge:
-            def __init__(self, pick):
-                self.pick, self.prompts = pick, []
+    def test_quick_draw_first_after_draw_wins(self):
+        async def steps(game):
+            await game.draw_later(0)
+            first, second = press(self.b), press(self.a)
+            if await game.interaction_check(first):
+                await game.trigger.callback(first)
+            self.assertFalse(await game.interaction_check(second), "too late")
+            return first
+        _, click = self.run_game(duels.QuickDraw, steps)
+        self.assertIn("kai wins", last_title(click.response.edits[0]["embed"]))
+        self.assertEqual(self.totals(), (900, 1100))
 
-            async def complete(self, system, prompt, schema, max_tokens):
-                self.prompts.append(prompt)
-                label = "A" if prompt.index(self.pick) < prompt.index("roast_B") else "B"
-                return '{"winner": "%s", "reason": "more specific"}' % label
-
-        def client(messages, judge):
-            queue = list(messages)
-
-            async def wait_for(event, timeout, check):
-                self.assertIn((7, 5), duels.busy, "roasts skip moderation")
-                while queue:
-                    m = queue.pop(0)
-                    if check(m):
-                        return m
-                raise asyncio.TimeoutError
-            return SimpleNamespace(wait_for=wait_for, settler=judge, chatter=None)
-
-        def said(who, text):
-            async def react(emoji):
-                pass
-            return SimpleNamespace(channel=SimpleNamespace(id=7), author=who, content=text, add_reaction=react)
-
-        judge = Judge("ur hairline")
-        messages = [said(self.c, "outsider"), said(self.a, "ur hairline is in witness protection"), said(self.a, "second one"),
-                    said(self.b, "ur mom")]
-        game, _ = self.run_game(duels.RoastBattle, lambda g: asyncio.sleep(0, g), client(messages, judge))
+    def test_ten_seconds(self):
+        async def steps(game):
+            game.started_at = time.monotonic() - 9.8
+            await game.stop_clock.callback(press(self.a))
+            again = press(self.a)
+            await game.stop_clock.callback(again)
+            self.assertIn("already stopped", again.response.sent[0])
+            game.started_at -= 1.0  # kai stops at about 10.8s
+            last = press(self.b)
+            await game.stop_clock.callback(last)
+            return last
+        _, click = self.run_game(duels.TenSeconds, steps)
+        embed = click.response.edits[0]["embed"]
+        self.assertIn("ben wins", last_title(embed))
+        self.assertIn("9.8", embed.description)
         self.assertEqual(self.totals(), (1100, 900))
-        self.assertNotIn("second one", judge.prompts[0], "only the first roast counts")
-        self.assertIn("hairline", game.message.edits[-1]["embed"].description)
-        self.assertEqual(duels.busy, set())
+
+    def test_ten_seconds_timeouts(self):
+        async def one(game):
+            await game.stop_clock.callback(press(self.b))
+            await game.on_timeout()
+            return game
+        game, _ = self.run_game(duels.TenSeconds, one)
+        self.assertEqual(self.totals(), (900, 1100), "the only one who stopped wins")
+        self.assertIn("never stopped", game.message.edits[-1]["embed"].description)
 
         self.setUp()
-        game, _ = self.run_game(duels.RoastBattle, lambda g: asyncio.sleep(0, g), client([said(self.b, "ur mid")], judge))
-        self.assertEqual(self.totals(), (900, 1100), "the only one who roasted wins")
-
-        self.setUp()
-        broken = SimpleNamespace(complete=lambda *a: asyncio.sleep(0, None))
-        self.run_game(duels.RoastBattle, lambda g: asyncio.sleep(0, g),
-                      client([said(self.a, "x"), said(self.b, "y")], broken))
-        self.assertEqual(self.totals(), (1000, 1000), "no judge means both get their bet back")
+        async def nobody(game):
+            await game.on_timeout()
+            return game
+        self.run_game(duels.TenSeconds, nobody)
+        self.assertEqual(self.totals(), (1000, 1000), "both bets back")
 
 
 if __name__ == "__main__":
