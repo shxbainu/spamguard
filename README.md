@@ -217,7 +217,9 @@ The moderation check already reads each message, so it also spots standout momen
 
 Winning a `/debate` is +100 each, and a message fact-checked as false is −100 for its author and +50 for the checker. Most moments land at 1 or 2; 4 and 5 are for genuinely exceptional ones.
 
-Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated. Turn it off with `AURA_ENABLED=false`.
+Each person can gain or lose aura from a message at most once every `AURA_COOLDOWN_MINUTES` (10). Mods can earn aura too (they just can't be punished). Nothing in the AI chat channel counts, since that channel isn't moderated, except being nice to the bot.
+
+**Being nice to the bot:** thanking it or complimenting it ("ty", "good bot", "ur funny") in a mention, a reply to it, or the chat channel has a 75% chance (`NICE_AURA_CHANCE`) of earning +10 to +25, at most once every 30 minutes (`NICE_AURA_COOLDOWN_MINUTES`). It's spotted from the wording, so it costs no AI tokens; sarcasm like "thanks for nothing" or "thanks but ur dumb" doesn't count, and every nice message starts the cooldown, so spamming "thanks" doesn't beat the odds. The points are tacked onto the bot's reply. Turn it off with `AURA_ENABLED=false`.
 
 ### Fact check
 
@@ -233,7 +235,7 @@ Debate decisions use the same sources (looking up the motion). `/settleargument`
 
 ### Casino and shop
 
-Aura is the currency. Everyone gets 500 the first time they use the casino (`CASINO_START_AURA`); after that, aura comes from chat (comebacks, callouts), debates, fact-checks, `/give` and winning bets. Bets can be a number, `1k`, `half` or `all`; you can't bet aura you don't have, so negative aura means you're broke until you earn some.
+Aura is the currency. Everyone gets 500 the first time they use the casino (`CASINO_START_AURA`), plus `/daily`: 100, and 20 more for each day in a row up to 200 (`DAILY_AURA`). After that, aura comes from chat (comebacks, callouts, being nice to the bot), debates, fact-checks, `/give` and winning bets. Bets can be a number, `1k`, `half` or `all`; you can't bet aura you don't have, so negative aura means you're broke until you earn some.
 
 | Game | How it pays |
 |---|---|
@@ -242,7 +244,20 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
 | `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
 | `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot (riskier guesses grow it more), cash out any time, one wrong guess loses it |
-| `/duel @user bet` | Both bet the same; 50/50, winner takes both |
+| `/duel @user bet game` | Both bet the same and play for the pot (default: a random skill game) |
+| `/daily` | Free aura once a day (more for days in a row) |
+
+Duel games:
+
+| Game | How it works |
+|---|---|
+| Quick draw | Wait for **DRAW!**, then hit the button first; clicking early loses |
+| Rock paper scissors | Both pick in secret; ties go again; not picking in time loses |
+| Math race | First to tap the right answer wins; a wrong tap loses |
+| Unscramble race | First to type the unscrambled word in the channel wins (those guesses skip moderation) |
+| Pure luck | 50/50 |
+
+If nobody wins (time runs out), both bets go back.
 
 Shop (`/shop` to see it, `/buy` to spend):
 

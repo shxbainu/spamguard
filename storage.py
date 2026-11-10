@@ -344,10 +344,10 @@ class Store:
         return (ids.index(user_id) + 1 if user_id in ids else 0), len(ids)
 
     def aura_from_moments(self, guild_id: int, user_id: int) -> int:
-        """Aura gained or lost from comebacks, callouts, false claims and debates."""
+        """Aura gained or lost from comebacks, callouts, false claims, bad takes, being nice to the bot and debates."""
         row = self.db.execute(
             "SELECT COALESCE(SUM(points), 0) FROM aura WHERE guild_id = ? AND user_id = ? AND kind IN "
-            "('comeback', 'callout', 'called_out', 'false_claim', 'bad_take', 'debate')",
+            "('comeback', 'callout', 'called_out', 'false_claim', 'bad_take', 'nice', 'debate')",
             (guild_id, user_id),
         )
         return row.fetchone()[0]

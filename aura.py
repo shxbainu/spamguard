@@ -1,12 +1,14 @@
 """Aura points. The moderation check already reads every message; when it (and the smarter second-opinion model)
 agree a message is a standout moment, the bot replies with one curt line and the points: a real comeback, calling
-out something false, or saying something blatantly false. Most messages never get any.
+out something false, or saying something blatantly false. Most messages never get any. Being nice to the bot
+(thanking it, complimenting it) usually earns a little too.
 
 /aura shows someone's aura and what they got it for; /aura leaderboard ranks everyone."""
 from __future__ import annotations
 
 import os
 import random
+import re
 import time
 from typing import Optional
 
@@ -32,7 +34,7 @@ LEVEL_POINTS = {
 DEBATE_POINTS = 100
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "gift": "gift", "shop": "shop",
+    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "daily": "daily", "nice": "was nice to the bot", "gift": "gift", "shop": "shop",
 }
 # What the bot is reacting to, for the one-liner it writes; {size} is how big the moment was.
 SITUATIONS = {
@@ -54,6 +56,49 @@ FALLBACK = {
     "false_claim": (["thats not true", "nah"], ["damn ur stupid", "holy shit this guy is dumb", "what are u on"]),
     "bad_take": (["weird take", "nah thats crazy"], ["worst take ive ever seen", "who hurt you", "get help"]),
 }
+
+
+# Being nice to the bot: how likely it pays, how much, and how often per person.
+NICE_CHANCE = float(os.getenv("NICE_AURA_CHANCE") or 0.75)
+NICE_POINTS = (10, 25)
+NICE_COOLDOWN_MINUTES = int(os.getenv("NICE_AURA_COOLDOWN_MINUTES") or 30)
+NICE = re.compile(
+    r"\b(?:thanks?|thank (?:you|u|ya)|ty(?:sm|vm)?|thx|thnx|appreciate (?:it|you|u|ya|that)|ily|i love (?:you|u|ya)|"
+    r"love (?:you|u|ya)|good bot|best bot|w bot|goat(?:ed)?|(?:you'?re|youre|ur|u r|you are) (?:so |really |actually |lowk(?:ey)? )?"
+    r"(?:the best|the goat|goated|funny|smart|cool|nice|sweet|great|awesome|amazing|based|right|hilarious|a legend|valid)|"
+    r"you'?re? right|ur right|well said|you'?re? the man|legend)\b",
+    re.IGNORECASE,
+)
+# Sarcasm and backhanded lines that would otherwise match.
+NOT_NICE = re.compile(
+    r"\b(?:for nothing|no thanks?|not|never|nvm|jk|/s|stupid|dumb|trash|garbage|sucks?|hate|useless|worst|shut up|stfu|"
+    r"idiot|clanker|mid|annoying|but)\b",
+    re.IGNORECASE,
+)
+NICE_FALLBACK = ["appreciate u", "ok ur cool", "finally someone nice", "u good fr", "ok i fw u"]
+
+
+def is_nice(text: str) -> bool:
+    """A message that's kind to the bot: thanks, a compliment, agreeing it was right. Not sarcasm."""
+    return bool(NICE.search(text)) and not NOT_NICE.search(text)
+
+
+def nice_aura(store, member: discord.Member, text: str, now: float | None = None, roll=random.random) -> int:
+    """Aura for being nice to the bot (0 if it isn't nice, they got some recently, or the roll misses). Any nice
+    message starts the cooldown, so spamming "thanks" doesn't beat the odds."""
+    if not AURA_ENABLED or not is_nice(text):
+        return 0
+    now = time.time() if now is None else now
+    key = f"nice:{member.guild.id}:{member.id}"
+    last = store.get_state(key)
+    if last and now - float(last) < NICE_COOLDOWN_MINUTES * 60:
+        return 0
+    store.set_state(key, str(now))
+    if roll() >= NICE_CHANCE:
+        return 0
+    points = random.randint(*NICE_POINTS)
+    store.add_aura(member.guild.id, member.id, member.display_name, points, "nice", "was nice to the bot", text[:300], now)
+    return points
 
 
 def points_for(kind: str, level: int) -> int:
@@ -139,7 +184,7 @@ aura_commands = app_commands.Group(name="aura", description="Aura points", guild
 
 LABELS = {
     "comeback": "Comeback", "callout": "Called someone out", "called_out": "Got called out",
-    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "gift": "Gift", "shop": "Shop",
+    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "daily": "Daily", "nice": "Nice to the bot", "gift": "Gift", "shop": "Shop",
 }
 
 

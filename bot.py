@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import time
 from collections import defaultdict, deque
 from datetime import timedelta
@@ -19,6 +20,7 @@ from dotenv import load_dotenv
 import aura
 import casino
 import debate
+import duels
 import factcheck
 import shop
 from cards import LOSS, card
@@ -236,7 +238,7 @@ class SpamGuard(discord.Client):
         for command in (
             spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
             debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
-            *casino.COMMANDS, *shop.COMMANDS,
+            *casino.COMMANDS, *duels.COMMANDS, *shop.COMMANDS,
         ):
             self.tree.add_command(command)
         if GUILD_ID:
@@ -360,10 +362,14 @@ class SpamGuard(discord.Client):
         history.append(history_line(message, is_gif))
 
         in_chat_channel = message.channel.id == CHAT_CHANNEL_ID
-        if not in_chat_channel:  # the AI chat channel is for messing around, so it isn't moderated
+        racing = (message.channel.id, message.author.id) in duels.busy  # unscramble guesses aren't chat
+        if not in_chat_channel and not racing:  # the AI chat channel is for messing around, so it isn't moderated
             await self.moderate(message, text, is_gif, context)
+        bonus = self.nice_bonus(message, text, in_chat_channel)
         if self.wants_reply(message, in_chat_channel):
-            self.spawn(self.chat_reply(message))
+            self.spawn(self.chat_reply(message, bonus))
+        elif bonus:
+            self.spawn(self.thank(message, bonus))
 
     async def moderate(self, message: discord.Message, text: str, is_gif: bool, context: list[tuple[str, str]]) -> None:
         channel_id = message.channel.id
@@ -403,6 +409,32 @@ class SpamGuard(discord.Client):
 
     # ---- AI chat -----------------------------------------------------------
 
+    def talking_to_bot(self, message: discord.Message, in_chat_channel: bool) -> bool:
+        """A mention of the bot or a reply to it, or a message in the chat channel that isn't aimed at someone else."""
+        ref = message.reference
+        replied_to = ref.resolved.author if ref is not None and isinstance(ref.resolved, discord.Message) else None
+        if self.user in message.mentions or replied_to == self.user:
+            return True
+        others = [m for m in message.mentions if m != self.user] or ([replied_to] if replied_to else [])
+        return in_chat_channel and not others
+
+    def nice_bonus(self, message: discord.Message, text: str, in_chat_channel: bool) -> int:
+        """Aura for being nice to the bot, if they were and the roll hits (0 otherwise)."""
+        if not self.talking_to_bot(message, in_chat_channel) or self.remaining_penalty(message.guild.id, message.author.id):
+            return 0
+        points = aura.nice_aura(self.store, message.author, text)
+        if points:
+            log.info("Nice to the bot: %s +%d aura (%r)", message.author, points, text[:80])
+        return points
+
+    async def thank(self, message: discord.Message, points: int) -> None:
+        """The short reply for nice-to-the-bot aura when the AI chat isn't answering this message."""
+        line = random.choice(aura.NICE_FALLBACK)
+        try:
+            await message.reply(f"{line} {aura.aura_text(points)}", mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+
     def wants_reply(self, message: discord.Message, in_chat_channel: bool) -> bool:
         """Answer everything in the chat channel, and mentions or replies to the bot anywhere."""
         if self.chatter is None:
@@ -421,7 +453,7 @@ class SpamGuard(discord.Client):
         self.last_reply[message.author.id] = now
         return True
 
-    async def chat_reply(self, message: discord.Message) -> None:
+    async def chat_reply(self, message: discord.Message, bonus: int = 0) -> None:
         history = self.history[message.channel.id]
         name = message.guild.me.display_name
         try:
@@ -436,6 +468,8 @@ class SpamGuard(discord.Client):
                     images=images, elsewhere=elsewhere, quotes=self.store.quotes_by(message.guild.id, message.author.id),
                 )
             if not text:
+                if bonus:
+                    await self.thank(message, bonus)
                 return
             where = "chat channel" if in_chat_channel else "mention"
             log.info("Reply (%s) by %s: %r", where, chatter.last_model, text[:100])
@@ -445,7 +479,8 @@ class SpamGuard(discord.Client):
                 reason=where + seen, detail=f"replying to: {message.clean_content[:300]}",
             )
             # No pings from the AI, ever (it can't @everyone or mention people).
-            await message.reply(text[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+            sent = f"{text[:1985]} {aura.aura_text(bonus)}" if bonus else text[:2000]
+            await message.reply(sent, mention_author=False, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException as e:
             log.warning("Couldn't send a chat reply in #%s: %s", getattr(message.channel, "name", "?"), e)
             return

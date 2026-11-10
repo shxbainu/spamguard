@@ -1,5 +1,5 @@
-"""The casino: aura is the currency. Everyone gets a one-time starting stack, earns more in chat, and can
-bet it on /coinflip, /slots, /roulette, /blackjack, /higherlower or a /duel against someone, give it away with
+"""The casino: aura is the currency. Everyone gets a one-time starting stack, claims more with /daily, earns
+more in chat, and can bet it on /coinflip, /slots, /roulette, /blackjack, /higherlower or a /duel against someone (duels.py), give it away with
 /give, or spend it in the /shop. Bets can be a number, "half" or "all" (also "1k", "2.5k")."""
 from __future__ import annotations
 
@@ -17,7 +17,10 @@ from cards import PLAYING, STARTING_REASON, WIN, add_result, card
 load_dotenv()
 
 START_AURA = int(os.getenv("CASINO_START_AURA") or 500)
-# If set, games only work in this channel (the shop and /give work anywhere).
+DAILY_AURA = int(os.getenv("DAILY_AURA") or 100)
+DAILY_STREAK_BONUS = 20  # extra per day in a row
+DAILY_MAX = 200
+# If set, games only work in this channel (the shop, /daily and /give work anywhere).
 CASINO_CHANNEL_ID = int(os.getenv("CASINO_CHANNEL_ID") or 0)
 GAME_TIMEOUT = 120  # seconds before an unfinished blackjack or higher/lower game ends itself
 
@@ -55,7 +58,7 @@ def parse_bet(text: str, available: int) -> int | str:
         except ValueError:
             return "Bet a number, like 100, 1k, half or all."
     if available <= 0:
-        return f"You're broke ({fmt(available)}). Earn some aura first."
+        return f"You're broke ({fmt(available)}). Claim /daily or earn some aura first."
     if amount < 1:
         return "Bet at least 1 aura."
     if amount > available:
@@ -445,84 +448,46 @@ async def higherlower_cmd(interaction: discord.Interaction, bet: str) -> None:
     game.message = await interaction.original_response()
 
 
-# ---- against each other -----------------------------------------------------------
-
-
-class Duel(discord.ui.View):
-    def __init__(self, challenger: discord.Member, target: discord.Member, bet: int, store):
-        super().__init__(timeout=60)
-        self.challenger, self.target, self.bet, self.store = challenger, target, bet, store
-        self.message: discord.Message | None = None
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.target.id:
-            await interaction.response.send_message("This duel isn't for you.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success)
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        store, bet = self.store, self.bet
-        welcome(store, self.target)
-        guild_id = self.target.guild.id
-        if balance(store, guild_id, self.challenger.id) < bet:
-            await interaction.response.edit_message(content=None, embed=discord.Embed(title="⚔️ Duel off", description=f"{self.challenger.display_name} can't cover the bet anymore."), view=None)
-            self.stop()
-            return
-        if not store.spend_aura(guild_id, self.target.id, self.target.display_name, bet, "duel", "bet"):
-            await interaction.response.send_message(f"You need {fmt(bet)} to accept.", ephemeral=True)
-            return
-        store.spend_aura(guild_id, self.challenger.id, self.challenger.display_name, bet, "duel", "bet")
-        winner, loser = random.sample([self.challenger, self.target], 2)
-        pay(store, winner, bet * 2, "duel", f"beat {loser.display_name}")
-        self.stop()
-        embed = card(winner, "⚔️ Duel", f"## {winner.display_name} wins\nBeat **{loser.display_name}** and took the pot.", color=WIN)
-        embed.add_field(name="Pot", value=fmt(bet * 2), inline=True)
-        embed.add_field(name=f"{winner.display_name}", value=fmt(balance(store, guild_id, winner.id)), inline=True)
-        embed.add_field(name=f"{loser.display_name}", value=fmt(balance(store, guild_id, loser.id)), inline=True)
-        await interaction.response.edit_message(content=None, embed=embed, view=None)
-
-    @discord.ui.button(label="Decline", style=discord.ButtonStyle.secondary)
-    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.stop()
-        await interaction.response.edit_message(content=None, embed=discord.Embed(title="⚔️ Duel declined", description=f"{self.target.display_name} didn't want it."), view=None)
-
-    async def on_timeout(self) -> None:
-        if self.message:
-            try:
-                await self.message.edit(content=None, embed=discord.Embed(title="⚔️ Duel off", description=f"{self.target.display_name} didn't answer."), view=None)
-            except discord.HTTPException:
-                pass
-
-
-@app_commands.command(name="duel", description="Challenge someone: you both bet the same aura, winner takes it all")
-@app_commands.describe(user="Who to challenge", bet="How much aura each (a number, half or all)")
-@app_commands.guild_only()
-@game_cooldown
-async def duel_cmd(interaction: discord.Interaction, user: discord.Member, bet: str) -> None:
-    store, member = interaction.client.store, interaction.user
-    problem = in_casino(interaction)
-    if not problem and (user.bot or user.id == member.id):
-        problem = "Pick someone else to duel."
-    if not problem:
-        welcome(store, member)
-        amount = parse_bet(bet, balance(store, member.guild.id, member.id))
-        problem = amount if isinstance(amount, str) else None
-    if problem:
-        await interaction.response.send_message(problem, ephemeral=True)
-        return
-    view = Duel(member, user, amount, store)
-    embed = card(member, "⚔️ Duel challenge", f"**{member.display_name}** wants to duel **{user.display_name}**. Winner takes all.", color=PLAYING)
-    embed.add_field(name="Bet each", value=fmt(amount), inline=True)
-    embed.add_field(name="Pot", value=fmt(amount * 2), inline=True)
-    embed.set_footer(text=f"{user.display_name} has 60 seconds to answer")
-    await interaction.response.send_message(
-        user.mention, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=[user]),
-    )
-    view.message = await interaction.original_response()
-
-
 # ---- getting aura -------------------------------------------------------------------
+
+
+def daily_amount(streak: int) -> int:
+    return min(DAILY_MAX, DAILY_AURA + DAILY_STREAK_BONUS * (streak - 1))
+
+
+def claim_daily(store, member: discord.Member, now: float | None = None) -> tuple[int, int, float]:
+    """(aura claimed, streak, when they claimed last). 0 claimed means they already did in the last 24 hours."""
+    now = time.time() if now is None else now
+    key = f"daily:{member.guild.id}:{member.id}"
+    saved = store.get_state(key)
+    last, _, streak = (saved or "0:0").partition(":")
+    last, streak = float(last), int(streak or 0)
+    if saved and now - last < 86400:
+        return 0, streak, last
+    streak = streak + 1 if now - last < 2 * 86400 else 1
+    amount = daily_amount(streak)
+    store.set_state(key, f"{now}:{streak}")
+    store.add_aura(member.guild.id, member.id, member.display_name, amount, "daily", f"day {streak} in a row")
+    return amount, streak, last
+
+
+@app_commands.command(name="daily", description="Claim your free daily aura (more for days in a row)")
+@app_commands.guild_only()
+async def daily_cmd(interaction: discord.Interaction) -> None:
+    store, member = interaction.client.store, interaction.user
+    started = welcome(store, member)
+    amount, streak, last = claim_daily(store, member)
+    if not amount:
+        await interaction.response.send_message(f"You already claimed today. Come back <t:{int(last + 86400)}:R>.", ephemeral=True)
+        return
+    body = f"## +{fmt(amount)}\nStreak: **{streak} day{'s' if streak != 1 else ''}**"
+    if started:
+        body += f" · plus {fmt(started)} to start"
+    if amount < DAILY_MAX:
+        body += f"\nCome back tomorrow for {fmt(daily_amount(streak + 1))}."
+    embed = card(member, "🌅 Daily aura", body, color=WIN)
+    embed.add_field(name="Balance", value=fmt(balance(store, member.guild.id, member.id)), inline=True)
+    await interaction.response.send_message(embed=embed)
 
 
 @app_commands.command(name="give", description="Give some of your aura to someone")
@@ -546,4 +511,4 @@ async def give_cmd(interaction: discord.Interaction, user: discord.Member, amoun
     await interaction.response.send_message(user.mention, embed=embed, allowed_mentions=discord.AllowedMentions(users=[user]))
 
 
-COMMANDS = [coinflip_cmd, slots_cmd, roulette_cmd, blackjack_cmd, higherlower_cmd, duel_cmd, give_cmd]
+COMMANDS = [coinflip_cmd, slots_cmd, roulette_cmd, blackjack_cmd, higherlower_cmd, daily_cmd, give_cmd]
