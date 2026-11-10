@@ -289,6 +289,15 @@ class Store:
         )
         return [row[0] for row in rows]
 
+    def quote_authors(self, guild_id: int) -> list[tuple[int, str]]:
+        """(author id, latest name) of everyone with a text quote saved."""
+        rows = self.db.execute(
+            "SELECT author_id, author_name FROM quotes WHERE guild_id = ? AND content != '' "
+            "GROUP BY author_id HAVING created_at = MAX(created_at)",
+            (guild_id,),
+        )
+        return [(row[0], row[1]) for row in rows]
+
     def count_quotes(self, guild_id: int) -> int:
         return self.db.execute("SELECT COUNT(*) FROM quotes WHERE guild_id = ?", (guild_id,)).fetchone()[0]
 
