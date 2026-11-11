@@ -323,6 +323,7 @@ Only people with the **Timeout Members** permission can use these.
 |---|---|
 | `/spreader history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
 | `/spreader reset @user` | Resets their offense count to zero (a timeout they're in keeps running) |
+| `/purge amount [user] [contains] [bots_only]` | Deletes recent messages in the channel: looks through the last `amount` (up to 200) and deletes those matching the options. Pinned messages are kept. Needs Manage Messages (for you and the bot); messages over 14 days old are deleted one at a time, which is slower. |
 | `/spreader markets` | Post today's prediction markets now, if they didn't go up. |
 | `/spreader resetall` | Resets everyone's offense count in the server |
 | `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |

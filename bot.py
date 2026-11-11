@@ -241,7 +241,7 @@ class SpamGuard(discord.Client):
 
     async def setup_hook(self) -> None:
         for command in (
-            spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
+            spamguard_commands, purge_cmd, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
             debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
             *casino.COMMANDS, *duels.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
         ):
@@ -724,6 +724,59 @@ def shutup_blocker(author: discord.Member, target: discord.Member) -> str | None
     if target.is_timed_out():
         return f"{target.mention} is already timed out."
     return None
+
+
+def purge_filter(user: discord.abc.User | None, contains: str | None, bots_only: bool):
+    """Which messages /purge deletes: never pinned ones, and only those matching the options given."""
+    needle = (contains or "").lower()
+
+    def keep(message: discord.Message) -> bool:
+        if message.pinned:
+            return False
+        if user is not None and message.author.id != user.id:
+            return False
+        if bots_only and not message.author.bot:
+            return False
+        return not needle or needle in message.content.lower()
+    return keep
+
+
+@app_commands.command(name="purge", description="Delete recent messages in this channel (mods only)")
+@app_commands.describe(
+    amount="How many recent messages to look through (1-200)", user="Only this person's messages",
+    contains="Only messages containing this text", bots_only="Only messages from bots",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_messages=True)
+@app_commands.checks.cooldown(1, 5, key=lambda i: i.channel_id)
+async def purge_cmd(
+    interaction: discord.Interaction, amount: app_commands.Range[int, 1, 200], user: Optional[discord.Member] = None,
+    contains: Optional[str] = None, bots_only: bool = False,
+) -> None:
+    channel = interaction.channel
+    if not interaction.permissions.manage_messages:
+        await interaction.response.send_message("You need Manage Messages to purge.", ephemeral=True)
+        return
+    if not channel.permissions_for(interaction.guild.me).manage_messages:
+        await interaction.response.send_message("I need the Manage Messages permission in this channel.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        # Messages under 14 days old go in bulk; older ones one at a time (slower, Discord's rule).
+        deleted = await channel.purge(limit=amount, check=purge_filter(user, contains, bots_only),
+                                      reason=f"/purge by {interaction.user}")
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Couldn't delete them: {e.text or e}", ephemeral=True)
+        return
+    bot: SpamGuard = interaction.client
+    which = " ".join(part for part in (
+        f"from {user.display_name}" if user else "", f'containing "{contains}"' if contains else "", "from bots" if bots_only else "",
+    ) if part)
+    log.info("%s purged %d message(s) in #%s %s", interaction.user, len(deleted), getattr(channel, "name", "?"), which)
+    bot.log_event(interaction.guild, channel, "purge", interaction.user,
+                  detail=f"deleted {len(deleted)} of the last {amount} messages {which}".strip())
+    await interaction.followup.send(f"Deleted **{len(deleted)}** message{'s' if len(deleted) != 1 else ''}"
+                                    f"{' ' + which if which else ''}.", ephemeral=True)
 
 
 @app_commands.command(name="shutup", description=f"Time someone out for {SHUTUP_SECONDS} seconds ({SHUTUP_PER_WEEK} uses per week, more in /shop)")

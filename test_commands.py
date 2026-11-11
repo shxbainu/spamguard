@@ -149,3 +149,52 @@ class NicknameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PurgeTests(unittest.TestCase):
+    def test_filter(self):
+        import bot
+        msg = lambda author, text, pinned=False, is_bot=False: SimpleNamespace(
+            author=SimpleNamespace(id=author, bot=is_bot), content=text, pinned=pinned)
+        everything = bot.purge_filter(None, None, False)
+        self.assertTrue(everything(msg(1, "hi")))
+        self.assertFalse(everything(msg(1, "rules", pinned=True)), "pinned messages stay")
+        ben = SimpleNamespace(id=5)
+        self.assertTrue(bot.purge_filter(ben, None, False)(msg(5, "spam")))
+        self.assertFalse(bot.purge_filter(ben, None, False)(msg(6, "spam")))
+        self.assertTrue(bot.purge_filter(None, "GIF", False)(msg(1, "look at this gif")))
+        self.assertFalse(bot.purge_filter(None, "gif", False)(msg(1, "hello")))
+        self.assertTrue(bot.purge_filter(None, None, True)(msg(1, "beep", is_bot=True)))
+        self.assertFalse(bot.purge_filter(None, None, True)(msg(1, "human")))
+
+    def test_command(self):
+        import asyncio
+        import bot
+        sent, purged = [], {}
+
+        class Channel:
+            name = "general"
+
+            def permissions_for(self, who):
+                return SimpleNamespace(manage_messages=True)
+
+            async def purge(self, limit, check, reason):
+                purged.update(limit=limit, reason=reason)
+                return [object()] * 3
+
+        async def defer(**kwargs):
+            pass
+
+        async def followup(text, **kwargs):
+            sent.append(text)
+        events = []
+        interaction = SimpleNamespace(
+            channel=Channel(), guild=SimpleNamespace(me=object()), user="mod#1",
+            permissions=SimpleNamespace(manage_messages=True),
+            response=SimpleNamespace(defer=defer), followup=SimpleNamespace(send=followup),
+            client=SimpleNamespace(log_event=lambda *a, **k: events.append(k)),
+        )
+        asyncio.run(bot.purge_cmd.callback(interaction, 50, None, "spam"))
+        self.assertEqual(purged["limit"], 50)
+        self.assertIn('Deleted **3** messages containing "spam"', sent[0])
+        self.assertIn("deleted 3 of the last 50", events[0]["detail"])
