@@ -322,6 +322,27 @@ class Store:
         row = self.db.execute("SELECT COALESCE(SUM(points), 0) FROM aura WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
         return row.fetchone()[0]
 
+    def reset_aura(self, guild_id: int, to: int, now: float | None = None) -> int:
+        """Sets everyone who has aura in this server to exactly `to`, with one adjustment each (history is kept).
+        Returns how many people it changed."""
+        now = time.time() if now is None else now
+        rows = self.db.execute(
+            "SELECT user_id, SUM(points) AS total, "
+            "(SELECT user_name FROM aura b WHERE b.guild_id = a.guild_id AND b.user_id = a.user_id ORDER BY created_at DESC, id DESC LIMIT 1) AS name "
+            "FROM aura a WHERE guild_id = ? GROUP BY user_id",
+            (guild_id,),
+        ).fetchall()
+        changed = 0
+        for user_id, total, name in rows:
+            if total != to:
+                self.db.execute(
+                    "INSERT INTO aura (created_at, guild_id, user_id, user_name, points, kind, reason) VALUES (?, ?, ?, ?, ?, 'gift', ?)",
+                    (now, guild_id, user_id, name, to - total, f"everyone reset to {to:,}"),
+                )
+                changed += 1
+        self.db.commit()
+        return changed
+
     def aura_history(self, guild_id: int, user_id: int, limit: int = 5) -> list[dict]:
         """Recent aura changes, not counting casino games."""
         rows = self.db.execute(

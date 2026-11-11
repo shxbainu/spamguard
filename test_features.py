@@ -454,3 +454,27 @@ class ShopTests(unittest.TestCase):
 if __name__ == "__main__":
     import unittest.mock  # noqa: F401
     unittest.main()
+
+
+class AuraResetTests(unittest.TestCase):
+    def test_reset_everyone(self):
+        store = temp_store()
+        store.add_aura(1, 5, "ben", 3000, "gift", "x")
+        store.add_aura(1, 6, "kai", -200, "slots", "bet")
+        store.add_aura(1, 7, "luke", 1250, "gift", "x")
+        store.add_aura(2, 5, "ben", 99, "gift", "other server")
+        self.assertEqual(store.reset_aura(1, 1250), 2, "luke was already there")
+        self.assertEqual([store.aura_total(1, u) for u in (5, 6, 7)], [1250, 1250, 1250])
+        self.assertEqual(store.aura_total(2, 5), 99, "other servers untouched")
+        self.assertEqual(store.aura_history(1, 5)[0]["reason"], "everyone reset to 1,250")
+
+    def test_runs_once_per_value(self):
+        import bot
+        store = temp_store()
+        store.add_aura(1, 5, "ben", 3000, "gift", "x")
+        fake = SimpleNamespace(store=store, guilds=[SimpleNamespace(id=1, name="srv")])
+        with unittest.mock.patch.dict(os.environ, {"AURA_RESET_TO": "1,250"}):
+            bot.SpamGuard.reset_aura_once(fake)
+            store.add_aura(1, 5, "ben", 500, "slots", "win")
+            bot.SpamGuard.reset_aura_once(fake)  # a later restart with it still set
+        self.assertEqual(store.aura_total(1, 5), 1750, "only once")

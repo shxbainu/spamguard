@@ -270,9 +270,30 @@ class SpamGuard(discord.Client):
             await self._dashboard.cleanup()
         await super().close()
 
+    def reset_aura_once(self) -> None:
+        """AURA_RESET_TO in .env puts everyone at that much aura, once per value (so leaving it set does nothing more)."""
+        target = os.getenv("AURA_RESET_TO", "").strip().replace(",", "")
+        if not target:
+            return
+        try:
+            amount = int(target)
+        except ValueError:
+            log.warning("AURA_RESET_TO must be a whole number, not %r", target)
+            return
+        for guild in self.guilds:
+            key = f"aura_reset:{guild.id}"
+            if self.store.get_state(key) == str(amount):
+                continue
+            changed = self.store.reset_aura(guild.id, amount)
+            self.store.set_state(key, str(amount))
+            log.warning("AURA_RESET_TO: set everyone in %s to %s aura (%d people changed). Remove AURA_RESET_TO now.",
+                        guild.name, f"{amount:,}", changed)
+
     async def on_ready(self) -> None:
         def describe(judge: Judge | None) -> str:
             return judge.model if judge else "off"
+
+        self.reset_aura_once()
 
         ladder = " → ".join(step.describe() for step in PUNISHMENTS)
         log.info("Logged in as %s. Punishments: %s", self.user, ladder)

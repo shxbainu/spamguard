@@ -274,6 +274,8 @@ Shop (`/shop` to see it, `/buy` to spend):
 | `roast` | 150 | The bot roasts someone (`/buy roast user`) |
 | `status` | 750 | Set the bot's status for an hour (`/buy status text`) |
 
+To reset everyone's aura, set `AURA_RESET_TO` (say `1250`) and restart: everyone who has aura is set to exactly that, once (an adjustment in their history, nothing deleted). Remove it afterwards; leaving it set does nothing more.
+
 Set `CASINO_CHANNEL_ID` to keep the games in one channel. `/aura check` shows someone's casino winnings or losses, items and shield; the casino doesn't fill up their aura history.
 
 ### Reputation with the bot
