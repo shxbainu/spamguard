@@ -197,7 +197,7 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/coinflip` `/slots` `/roulette` `/blackjack` `/higherlower` | Casino games; bet aura. |
 | `/duel @user bet [game]` | You both bet the same aura and play quick draw, 10 seconds, split or steal, or pure luck. |
 | `/daily` | Free aura once a day. |
-| `/predict [yes/no] [bet]` | Bet on today's yes/no question (pays 2x), or see it. |
+| `/predict` | Today's prediction markets; bet by tapping an outcome on the market posts. |
 | `/rep [user]` | How the bot feels about someone, from -100 to 100. |
 | `/give @user amount` | Give someone aura. |
 | `/shop` / `/buy item` | Spend aura: extra or 1-minute /shutups, a shutup shield, renaming someone, a roast, the bot's status. |
@@ -284,12 +284,12 @@ How it tells nice from rude, in order:
 
 The same check decides nice-to-the-bot aura. Turn reputation off with `REP_ENABLED=false`.
 
-### Daily prediction
+### Prediction markets
 
-Every day at `PREDICT_OPEN` (10:00) the bot posts one yes/no question in `PREDICT_CHANNEL_ID` (default: the casino channel, else the chat channel). Bet with `/predict yes 100` (once a day, up to `PREDICT_MAX_BET`, 500) until `PREDICT_CLOSE` (18:00); at `PREDICT_SETTLE` (23:30) it posts the answer and right bets pay 2x. Times use `GRASS_TIMEZONE`.
+Every day at `PREDICT_OPEN` (10:00) the bot posts up to `PREDICT_MARKETS` (3) Polymarket-style markets in `PREDICT_CHANNEL_ID` (default: the casino channel, else the chat channel). Each has 2 to 4 outcomes with a chance and a **fixed payout** (a long shot pays more: 50% pays 1.9x, 20% pays 4.8x, between 1.1x and 8x). Tap an outcome, type your bet (up to `PREDICT_MAX_BET`, 500, once per market), and a right bet pays what it said, no matter how many other people bet. Bets close at `PREDICT_CLOSE` (18:00); at `PREDICT_SETTLE` (23:30) each post shows the result and the bot posts a summary. `/predict` shows today's markets. Times use `GRASS_TIMEZONE`, and the buttons keep working after a restart.
 
-- **About the server** (no AI at all, settled from the bot's own records): will the server send more than N messages, will the bot time anyone out, will anyone gain or lose N+ aura from one message, will anyone lose N+ in the casino. Each N comes from the past 14 days (a typical day here), so a small server gets "lose 200+ in the casino", not 1,000+. A question that would have been "yes" on fewer than 20% or more than 80% of those days is skipped as a near sure thing, and if nothing fits (a new or quiet server), there's no question that day.
-- **Sports or news** (`PREDICT_WORLD_CHANCE`, half the days): only when the `/settleargument` model can search the web (Gemini). One search writes the question, one checks the result that night. Without real search results it falls back to a server question, and if the result can't be confirmed every bet goes back.
+- **Real world** (`PREDICT_WORLD_MARKETS`, up to 2 a day): only when the `/settleargument` model can search the web (Gemini). One search writes them in the morning (games tonight, a star's stat line, the weather, a big event, worded like the group chat would) with the AI's estimate of each outcome's chance, and one search settles them all at night. Without real search results nothing is made up, and a result that can't be confirmed gives every bet back.
+- **About the server** (no AI): how many messages, how many timeouts, the biggest aura swing, the biggest casino loss. The ranges and chances come from the past 14 days, and a market where any outcome came up on under 15% of those days is skipped, so it's never a sure thing. A quiet new server may get none.
 
 ### The Daily Aura
 

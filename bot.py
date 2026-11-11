@@ -246,6 +246,7 @@ class SpamGuard(discord.Client):
             *casino.COMMANDS, *duels.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
         ):
             self.tree.add_command(command)
+        self.add_dynamic_items(predict.OutcomeButton)  # market buttons keep working after a restart
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
             self.tree.copy_global_to(guild=guild)

@@ -20,10 +20,20 @@ SPAN = (START, START + 86400)
 class FakeChannel:
     def __init__(self):
         self.guild = SimpleNamespace(id=1, me=person(99, "bot"))
-        self.sent = []
+        self.sent, self.views, self.edits = [], [], []
 
-    async def send(self, content=None, embed=None, **kwargs):
+    async def send(self, content=None, embed=None, view=None, **kwargs):
         self.sent.append(embed)
+        self.views.append(view)
+        return SimpleNamespace(id=1000 + len(self.sent))
+
+    def get_partial_message(self, message_id):
+        channel = self
+
+        class Partial:
+            async def edit(self, **kwargs):
+                channel.edits.append((message_id, kwargs))
+        return Partial()
 
 
 class Writer:
@@ -50,42 +60,81 @@ def predictor(store, settler=None, now=DAY):
     return p, channel
 
 
-class PredictionTests(unittest.TestCase):
-    def test_chat_questions_settle_from_records(self):
+WORLD = {"markets": [
+    {"question": "How many points does Wemby drop tonight?", "outcomes": ["Under 25", "25 to 29", "30+"],
+     "chances": [30, 40, 30], "check": "wembanyama points tonight"},
+    {"question": "Will it rain in London today?", "outcomes": ["Yes", "No"], "chances": [80, 20], "check": "london rain today"},
+    {"question": "broken", "outcomes": ["only one"], "chances": [100], "check": "x"},
+]}
+
+
+def bettors(channel):
+    people = [person(5, "ben"), person(6, "kai"), person(7, "luke")]
+    for who in people:
+        who.guild = channel.guild
+    return people
+
+
+class PayoutTests(unittest.TestCase):
+    def test_prices_follow_the_chances(self):
+        self.assertEqual(predict.prices([50, 50], 2), [1.9, 1.9])
+        self.assertEqual(predict.prices([80, 20], 2), [1.2, 4.8])
+        self.assertEqual(predict.prices([99, 1], 2), [1.1, 8.0], "kept between 1.1x and 8x")
+        self.assertEqual(predict.prices(None, 4), [3.8] * 4, "even odds when the chances are missing")
+        self.assertEqual(predict.prices([60, 60, 80], 3), predict.prices([30, 30, 40], 3), "scaled to add up")
+
+    def test_fixed_payouts_whoever_else_bets(self):
+        market = {"outcomes": ["A", "B"], "pays": [1.9, 4.8], "bets": {"5": [1, 100, "ben"]}}
+        self.assertEqual(predict.payouts(market, 1), {"5": 480}, "alone and still paid")
+        self.assertEqual(predict.payouts(market, 0), {})
+        market["bets"]["6"] = [0, 50, "kai"]
+        self.assertEqual(predict.payouts(market, 0), {"6": 95})
+        self.assertEqual(predict.payouts(market, -1), {"5": 100, "6": 50}, "unknown: bets back")
+
+    def test_old_yes_no_days_still_settle(self):
+        old = {"kind": "casino", "question": "Will anyone lose 1,000+ aura in the casino today?", "status": "open",
+               "bets": {"5": ["no", 100, "ben"]}}
+        new = predict.upgrade(old)
+        market = new["markets"][0]
+        self.assertEqual(market["outcomes"], ["Yes", "No"])
+        self.assertEqual(market["bets"]["5"][0], 1)
+        self.assertEqual(predict.payouts(market, 1), {"5": 200}, "the 2x it promised")
+
+
+class ServerMarketTests(unittest.TestCase):
+    def test_ranges_come_from_recent_days(self):
+        history = {"messages": [437, 380, 512, 300, 410, 290], "timeout": [0] * 14,
+                   "moment": [50, 0, 100, 25, 50, 0, 50, 100, 0, 25, 50, 0, 0, 50],
+                   "casino": [200, 0, 300, 150, 0, 250, 0, 200, 0, 0, 150, 300, 0, 200]}
+        found = {m["kind"]: m for m in predict.server_markets(history)}
+        self.assertNotIn("timeout", found, "never happens here, so it's no market")
+        self.assertEqual(found["messages"]["outcomes"], ["Under 375", "375 to 424", "425+"])
+        casino = found["casino"]
+        self.assertTrue(all(cut <= 300 for cut in casino["cuts"]), "realistic for how much people lose here")
+        for market in found.values():
+            self.assertGreaterEqual(min(market["shares"]), predict.MIN_SHARE, market)
+
+    def test_quiet_server_has_no_markets(self):
+        self.assertEqual(predict.server_markets({"messages": [], "timeout": [0, 0], "moment": [], "casino": []}), [])
+        self.assertEqual(predict.server_markets({"timeout": [1] * 14}), [], "happens every day, so it's a sure thing")
+
+    def test_buckets(self):
+        self.assertEqual([predict.bucket(v, [100, 250]) for v in (0, 99, 100, 249, 250, 999)], [0, 0, 1, 1, 2, 2])
+
+    def test_server_values(self):
         store = temp_store()
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "timeout"}, SPAN, 0)[0], "no")
         store.db.execute(
             "INSERT INTO punishments (created_at, guild_id, user_id, user_name, action, duration_seconds, offense, category, reason) "
             "VALUES (?, 1, 5, 'ben', 'timeout', 60, 1, 'gif', 'GIF spam')", (START + 100,))
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "timeout"}, SPAN, 0)[0], "yes")
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "timeout"}, (SPAN[1], SPAN[1] + 86400), 0)[0], "no", "only that day")
-        store.add_aura(1, 5, "ben", -100, "false_claim", "confidently: x", now=START + 5)
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "moment"}, SPAN, 0), ("yes", "biggest was -100"))
+        self.assertEqual(predict.server_value(store, 1, "timeout", SPAN, 0)[0], 1)
+        self.assertEqual(predict.server_value(store, 1, "timeout", (SPAN[1], SPAN[1] + 86400), 0)[0], 0, "only that day")
         store.add_aura(1, 6, "kai", -600, "slots", "bet", now=START + 5)
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "casino"}, SPAN, 0)[0], "no")
         store.add_aura(1, 6, "kai", -500, "roulette", "bet", now=START + 6)
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "casino"}, SPAN, 0)[0], "yes")
-        self.assertEqual(predict.settle_chat(store, 1, {"kind": "messages", "line": 300}, SPAN, 301)[0], "yes")
+        self.assertEqual(predict.server_value(store, 1, "casino", SPAN, 0)[0], 1100)
+        store.add_aura(1, 5, "ben", -100, "false_claim", "x", now=START + 5)
+        self.assertEqual(predict.server_value(store, 1, "moment", SPAN, 0), (100, "biggest swing was -100"))
 
-    def test_lines_come_from_recent_days(self):
-        # A small server: casino losses around 150-300 a day, nobody near 1,000.
-        history = {"messages": [437, 380, 512, 300], "timeout": [0] * 14,
-                   "moment": [50, 0, 100, 25, 50, 0, 50, 100, 0, 25, 50, 0, 0, 50],
-                   "casino": [200, 0, 300, 150, 0, 250, 0, 200, 0, 0, 150, 300, 0, 200]}
-        found = {q["kind"]: q for q in predict.chat_questions(history)}
-        self.assertEqual(found["messages"]["line"], 400)
-        self.assertEqual(found["casino"]["line"], 200, "realistic for how much people actually lose here")
-        self.assertIn("200+ aura in the casino", found["casino"]["question"])
-        self.assertEqual(found["moment"]["line"], 50)
-        self.assertNotIn("timeout", found, "never happens here, so it's not a real question")
-        for question in found.values():
-            self.assertTrue(0.2 <= question["rate"] <= 0.8, question)
-
-    def test_no_history_means_no_server_questions(self):
-        self.assertEqual(predict.chat_questions({"messages": [], "timeout": [0, 0], "moment": [], "casino": []}), [])
-        self.assertEqual(predict.chat_questions({"timeout": [1] * 14}), [], "happens every day, so it's a sure thing")
-
-    def test_history_reads_the_past_days(self):
+    def test_history(self):
         store = temp_store()
         p, _ = predictor(store)
         store.add_aura(1, 6, "kai", -300, "slots", "bet", now=START - 86400 + 60)  # yesterday
@@ -96,89 +145,122 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(days["messages"], [120])
         self.assertEqual(len(days["timeout"]), predict.HISTORY_DAYS)
 
-    def test_quiet_server_skips_the_day(self):
-        store = temp_store()
-        p, channel = predictor(store)
+
+class MarketDayTests(unittest.TestCase):
+    def test_world_markets_need_real_search_results(self):
+        p, _ = predictor(temp_store(), Writer(WORLD, sources=()))
+        self.assertEqual(asyncio.run(p.world_markets(DAY, 2)), [], "no sources, so nothing made up")
+        p.bot.settler = Writer(WORLD)
+        markets = asyncio.run(p.world_markets(DAY, 3))
+        self.assertEqual(len(markets), 2, "the broken one is dropped")
+        self.assertEqual(markets[1]["pays"], [1.2, 4.8])
+        p.bot.settler = Writer(WORLD, searches=False)
+        self.assertEqual(asyncio.run(p.world_markets(DAY, 2)), [])
+        self.assertEqual(p.bot.settler.calls, 0, "no search model, no AI call")
+
+    def test_quiet_server_without_search_skips_the_day(self):
+        p, channel = predictor(temp_store())
         asyncio.run(p.tick())
         self.assertEqual(p.load(1, "2026-11-10")["status"], "skipped")
-        self.assertEqual(channel.sent, [], "nothing posted")
         asyncio.run(p.tick())
-        self.assertEqual(channel.sent, [], "and it doesn't retry every minute")
-        self.assertIn("no question today", p.place(person(5, "ben"), "yes", "10"))
+        self.assertEqual(channel.sent, [], "nothing posted, and no retry every minute")
 
-    def test_payouts(self):
-        bets = {"5": ["yes", 100, "ben"], "6": ["no", 50, "kai"]}
-        self.assertEqual(predict.payouts(bets, "yes"), {"5": 200})
-        self.assertEqual(predict.payouts(bets, "unknown"), {"5": 100, "6": 50})
+    def test_full_day(self):
+        store = temp_store()
+        p, channel = predictor(store, Writer(WORLD))
+        ben, kai, luke = bettors(channel)
+        asyncio.run(p.tick())
+        data = p.load(1, "2026-11-10")
+        self.assertEqual([m["kind"] for m in data["markets"]], ["world", "world"], "nothing about the server yet")
+        self.assertEqual(len(channel.sent), 2)
+        self.assertEqual([m["message_id"] for m in data["markets"]], [1001, 1002])
+        buttons = channel.views[1].children
+        self.assertEqual([b.item.label for b in buttons], ["A. Yes", "B. No"])
+        self.assertEqual(buttons[1].item.custom_id, "predict:2026-11-10:1:1")
+        self.assertIn("pays **4.8x**", channel.sent[1].description)
 
-    def test_full_day_with_bets(self):
+        market, said = p.place(ben, "2026-11-10", 1, 1, "100")
+        self.assertIn("pays 480 aura if right", said)
+        self.assertIn("already put", p.place(ben, "2026-11-10", 1, 0, "100"))
+        self.assertIn("most you can bet", p.place(kai, "2026-11-10", 1, 0, "9999"))
+        p.place(kai, "2026-11-10", 0, 2, "50")
+        self.assertIn("closed", p.place(luke, "2026-11-09", 0, 0, "10"), "yesterday's market")
+        p.today = lambda: DAY.replace(hour=19)
+        self.assertIn("closed", p.place(luke, "2026-11-10", 0, 0, "10"))
+
+        p.today = lambda: DAY.replace(hour=23, minute=45)
+        p.bot.settler = Writer({"results": [{"market": 0, "outcome": 2, "reason": "Wemby had 34"},
+                                            {"market": 1, "outcome": -1, "reason": "no report"}]})
+        asyncio.run(p.tick())
+        data = p.load(1, "2026-11-10")
+        self.assertEqual(data["status"], "settled")
+        self.assertEqual(store.aura_total(1, 6), 500 - 50 + int(50 * data["markets"][0]["pays"][2]), "kai had 30+")
+        self.assertEqual(store.aura_total(1, 5), 500, "rain unknown, so ben's bet came back")
+        self.assertEqual(len(channel.edits), 2, "both market posts show the result and lose their buttons")
+        self.assertIsNone(channel.edits[0][1]["view"])
+        self.assertIn("Wemby had 34", channel.edits[0][1]["embed"].description)
+        self.assertIn("Today's results", channel.sent[-1].title)
+
+    def test_tap_an_outcome_then_type_the_bet(self):
+        store = temp_store()
+        p, channel = predictor(store, Writer(WORLD))
+        ben = bettors(channel)[0]
+        asyncio.run(p.tick())
+        button = channel.views[1].children[1]
+        modals, replies, edits = [], [], []
+
+        class Response:
+            async def send_modal(self, modal):
+                modals.append(modal)
+
+            async def send_message(self, text=None, **kwargs):
+                replies.append(text)
+
+        class Message:
+            async def edit(self, **kwargs):
+                edits.append(kwargs)
+
+        message = Message()
+        tap = SimpleNamespace(user=ben, response=Response(), message=message, guild=channel.guild,
+                              client=SimpleNamespace(predictions=p))
+        asyncio.run(button.callback(tap))
+        modal = modals[0]
+        self.assertIn("B. No", modal.title)
+        modal.amount._value = "half"
+        asyncio.run(modal.on_submit(tap))
+        self.assertIn("put 250 aura on **No**", replies[0])
+        self.assertIn("1 bet", edits[0]["embed"].description, "the post updates")
+        self.assertEqual(store.aura_total(1, 5), 250)
+
+        restored = asyncio.run(predict.OutcomeButton.from_custom_id(
+            tap, SimpleNamespace(label="A. Yes"), predict.re.match(predict.OutcomeButton.__discord_ui_compiled_template__,
+                                                                 "predict:2026-11-10:1:0")))
+        self.assertEqual((restored.date, restored.market_id, restored.outcome), ("2026-11-10", 1, 0), "works after a restart")
+
+    def test_server_markets_settle_without_ai(self):
         store = temp_store()
         p, channel = predictor(store)
-        ben, kai, luke = person(5, "ben"), person(6, "kai"), person(7, "luke")
-        for who in (ben, kai, luke):
-            who.guild = channel.guild
-        self.assertIn("goes up at", p.place(ben, "yes", "100"))
-        for back in range(1, 8):  # a week where somebody got a 100-aura moment every other day
-            store.add_aura(1, 8, "luke", 100 if back % 2 else 25, "comeback", "x", now=START - back * 86400 + 60)
+        for back in range(1, 15):
+            store.add_aura(1, 8, "luke", -[100, 300, 600][back % 3], "slots", "bet", now=START - back * 86400 + 60)
         asyncio.run(p.tick())
         data = p.load(1, "2026-11-10")
-        self.assertEqual(data["status"], "open")
-        self.assertEqual(len(channel.sent), 1)
-        asyncio.run(p.tick())
-        self.assertEqual(len(channel.sent), 1, "one question a day")
-        self.assertIsInstance(p.place(ben, "yes", "100"), predict.discord.Embed)
-        self.assertIn("already bet", p.place(ben, "no", "100"))
-        self.assertIn("most you can bet", p.place(kai, "no", "9999"))
-        p.place(kai, "no", "50")
-        data = p.load(1, "2026-11-10")
-        data.update(kind="timeout", question="Will the bot time anyone out today?")
-        p.save(1, "2026-11-10", data)
-        p.today = lambda: DAY.replace(hour=19)
-        self.assertIn("closed", p.place(luke, "yes", "10"))
+        casino = next(m for m in data["markets"] if m["kind"] == "casino")
+        ben = bettors(channel)[0]
+        p.place(ben, "2026-11-10", casino["id"], 2, "100")
+        store.add_aura(1, 8, "luke", -700, "slots", "bet", now=START + 60)
         p.today = lambda: DAY.replace(hour=23, minute=45)
         asyncio.run(p.tick())
-        self.assertEqual(p.load(1, "2026-11-10")["answer"], "no")
-        self.assertEqual(store.aura_total(1, 5), 400, "500 start - 100")
-        self.assertEqual(store.aura_total(1, 6), 550, "500 start - 50 + 100")
-        self.assertIn("kai", channel.sent[-1].fields[0].value)
+        settled = next(m for m in p.load(1, "2026-11-10")["markets"] if m["kind"] == "casino")
+        self.assertEqual(settled["answer"], 2)
+        self.assertEqual(store.aura_total(1, 5), 400 + int(100 * settled["pays"][2]))
 
     def test_settles_yesterday_after_being_offline(self):
-        store = temp_store()
-        p, channel = predictor(store)
-        p.save(1, "2026-11-09", {"kind": "timeout", "question": "q", "status": "open", "bets": {}})
+        p, _ = predictor(temp_store())
+        p.save(1, "2026-11-09", {"status": "open", "markets": []})
         p.today = lambda: DAY.replace(hour=8)
         asyncio.run(p.tick())
         self.assertEqual(p.load(1, "2026-11-09")["status"], "settled")
         self.assertIsNone(p.load(1, "2026-11-10"), "not open yet")
-
-    def test_world_question_needs_real_search_results(self):
-        store = temp_store()
-        no_sources = Writer({"question": "Will the Knicks beat the Celtics tonight?", "check": "knicks celtics"}, sources=())
-        p, _ = predictor(store, no_sources)
-        predict.PREDICT_WORLD_CHANCE, old = 1.0, predict.PREDICT_WORLD_CHANCE
-        try:
-            data = asyncio.run(p.make_question(1, DAY))
-            self.assertNotEqual(data.get("kind"), "world", "no search results, so no made-up world question")
-            p.bot.settler = Writer({"question": "Will the Knicks beat the Celtics tonight?", "check": "knicks celtics"})
-            data = asyncio.run(p.make_question(1, DAY))
-            self.assertEqual(data["kind"], "world")
-            p.bot.settler = Writer({"answer": "unknown", "reason": "postponed"})
-            self.assertEqual(asyncio.run(p.check_world(data, DAY))[0], "unknown")
-            p.bot.settler = Writer({"answer": "yes", "reason": "Knicks won 110-104"}, sources=())
-            self.assertEqual(asyncio.run(p.check_world(data, DAY))[0], "unknown", "no sources, so it isn't trusted")
-            p.bot.settler = Writer({"answer": "yes", "reason": "Knicks won 110-104"})
-            self.assertEqual(asyncio.run(p.check_world(data, DAY)), ("yes", "Knicks won 110-104"))
-        finally:
-            predict.PREDICT_WORLD_CHANCE = old
-
-    def test_no_search_means_chat_questions_only(self):
-        p, _ = predictor(temp_store(), Writer({}, searches=False))
-        predict.PREDICT_WORLD_CHANCE, old = 1.0, predict.PREDICT_WORLD_CHANCE
-        try:
-            self.assertNotEqual(asyncio.run(p.make_question(1, DAY)).get("kind"), "world")
-            self.assertEqual(p.bot.settler.calls, 0)
-        finally:
-            predict.PREDICT_WORLD_CHANCE = old
 
 
 class NewsTests(unittest.TestCase):
