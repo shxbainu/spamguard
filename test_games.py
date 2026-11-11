@@ -245,8 +245,13 @@ class GrantTests(unittest.TestCase):
         asyncio.run(bot.grantaura_cmd.callback(interaction, shx, -250, "oops"))
         self.assertEqual(store.aura_total(1, 5), 1000)
         self.assertEqual(store.aura_history(1, 5)[0]["reason"], "oops")
-        self.assertTrue(any(getattr(c, "__qualname__", "").startswith("has_permissions") for c in bot.grantaura_cmd.checks),
-                        "admins only")
+        member = lambda admin: SimpleNamespace(user=SimpleNamespace(guild_permissions=SimpleNamespace(administrator=admin)))
+        self.assertTrue(bot.can_grant(member(True)))
+        with unittest.mock.patch.object(bot, "GRANT_AURA_OPEN", False):
+            with self.assertRaises(bot.app_commands.MissingPermissions):
+                bot.can_grant(member(False))
+        with unittest.mock.patch.object(bot, "GRANT_AURA_OPEN", True):
+            self.assertTrue(bot.can_grant(member(False)), "everyone while it's opened up")
 
 
 class DuelLogicTests(unittest.TestCase):
