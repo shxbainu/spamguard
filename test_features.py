@@ -478,3 +478,11 @@ class AuraResetTests(unittest.TestCase):
             store.add_aura(1, 5, "ben", 500, "slots", "win")
             bot.SpamGuard.reset_aura_once(fake)  # a later restart with it still set
         self.assertEqual(store.aura_total(1, 5), 1750, "only once")
+
+
+class HigherLowerTuningTests(unittest.TestCase):
+    def test_two_coin_flips_arent_4x(self):
+        import casino
+        step = casino.HOUSE_EDGE / casino.higher_lower_odds(7, "higher")
+        self.assertAlmostEqual(step, 1.7)
+        self.assertLess(step * step, 3.0)

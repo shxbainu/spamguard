@@ -248,7 +248,7 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/slots bet` | Pair 1.5x, three of a kind 10x, three 🍑 25x |
 | `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
 | `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
-| `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot (riskier guesses grow it more), cash out any time, one wrong guess loses it |
+| `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.85 ÷ the chance it was right (a 50/50 is 1.7x, two in a row about 2.9x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
 | `/duel @user bet game` | Both bet the same and play for the pot (default: a random one of the first three below) |
 | `/daily` | Free aura once a day (more for days in a row) |
 
