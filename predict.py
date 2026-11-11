@@ -176,6 +176,32 @@ def server_markets(history: dict[str, list[int]]) -> list[dict]:
     return [m for m in markets if m]
 
 
+# Draws the bot makes itself when the markets settle, with exact odds, so there's always something to bet on even on
+# a quiet day without web search.
+HOUSE_MARKETS = [
+    {"kind": "draw", "draw": "roll", "question": "Tonight's 🎲 roll from 1 to 100 lands on…",
+     "outcomes": ["1 to 25", "26 to 50", "51 to 75", "76 to 100"], "shares": [0.25, 0.25, 0.25, 0.25]},
+    {"kind": "draw", "draw": "roulette", "question": "Tonight's 🎰 roulette spin lands on…",
+     "outcomes": ["Red", "Black", "Green (0)"], "shares": [18 / 37, 18 / 37, 1 / 37]},
+    {"kind": "draw", "draw": "flips", "question": "Five 🪙 coin flips tonight: how many heads?",
+     "outcomes": ["0 or 1", "2", "3", "4 or 5"], "shares": [6 / 32, 10 / 32, 10 / 32, 6 / 32]},
+]
+RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+
+
+def draw(market: dict, rng: random.Random = random) -> tuple[int, str]:
+    """(winning outcome, what was drawn) for a house market."""
+    if market["draw"] == "roll":
+        number = rng.randint(1, 100)
+        return (number - 1) // 25, f"rolled **{number}**"
+    if market["draw"] == "roulette":
+        number = rng.randint(0, 36)
+        return (2 if number == 0 else 0 if number in RED else 1), f"landed on **{number}**"
+    flips = [rng.random() < 0.5 for _ in range(5)]
+    heads = sum(flips)
+    return (0 if heads <= 1 else 1 if heads == 2 else 2 if heads == 3 else 3), "".join("H" if f else "T" for f in flips) + f" ({heads} heads)"
+
+
 def server_value(store, guild_id: int, kind: str, span: tuple[float, float], messages: int) -> tuple[int, str]:
     """(today's number for a server market, how to say it)."""
     if kind == "messages":
@@ -310,12 +336,39 @@ class Predictions:
                 self.save(guild_id, date, data)
         date = now.date().isoformat()
         if self.load(guild_id, date) is None and at(now, PREDICT_OPEN) <= now < at(now, PREDICT_CLOSE):
-            data = await self.make_markets(guild_id, now)
-            self.save(guild_id, date, data)
+            await self.open_markets(channel, now)
+
+    async def open_markets(self, channel, now: datetime, close: str | None = None) -> dict:
+        """Makes today's markets and posts them; `close` overrides when bets close (for posting late)."""
+        guild_id, date = channel.guild.id, now.date().isoformat()
+        data = await self.make_markets(guild_id, now)
+        if close:
+            data["close"] = close
             for market in data["markets"]:
-                message = await channel.send(embed=self.market_card(channel.guild, market), view=self.buttons(date, market))
-                market["message_id"] = message.id
-            self.save(guild_id, date, data)
+                market["close"] = close
+        self.save(guild_id, date, data)
+        for market in data["markets"]:
+            message = await channel.send(embed=self.market_card(channel.guild, market), view=self.buttons(date, market))
+            market["message_id"] = message.id
+        self.save(guild_id, date, data)
+        return data
+
+    async def post_now(self) -> str:
+        """For mods: puts today's markets up right away (if they didn't go up, or the day was skipped)."""
+        channel = self.channel()
+        if not PREDICT_ENABLED or channel is None:
+            return "Predictions are off, or there's no PREDICT_CHANNEL_ID, CASINO_CHANNEL_ID or CHAT_CHANNEL_ID to post in."
+        now = self.today()
+        existing = self.load(channel.guild.id, now.date().isoformat())
+        if existing and existing["status"] != "skipped" and existing["markets"]:
+            return f"Today's markets are already up in {channel.mention}."
+        settle = at(now, PREDICT_SETTLE)
+        if now >= settle - timedelta(minutes=30):
+            return f"Too late today: they settle at {PREDICT_SETTLE}. Tomorrow's go up at {PREDICT_OPEN}."
+        # Late in the day, keep bets open a couple of hours (but close them before the results).
+        close = max(at(now, PREDICT_CLOSE), min(now + timedelta(hours=2), settle - timedelta(minutes=30)))
+        data = await self.open_markets(channel, now, close.strftime("%H:%M"))
+        return f"Posted {len(data['markets'])} market{'s' if len(data['markets']) != 1 else ''} in {channel.mention}; bets close {close:%H:%M}."
 
     def history(self, guild_id: int, now: datetime) -> dict[str, list[int]]:
         """What happened on each of the past HISTORY_DAYS days, for setting realistic ranges. Days before the bot
@@ -351,6 +404,9 @@ class Predictions:
         server = server_markets(self.history(guild_id, now))
         random.shuffle(server)
         markets += server[: PREDICT_MARKETS - len(markets)]
+        house = [dict(m) for m in HOUSE_MARKETS]
+        random.shuffle(house)
+        markets += house[: PREDICT_MARKETS - len(markets)]  # fill any gaps, so a day is never empty
         for i, market in enumerate(markets):
             market.setdefault("pays", prices(market.get("shares"), len(market["outcomes"])))
             market.update(id=i, bets={})
@@ -370,14 +426,14 @@ class Predictions:
             chance = min(99, round(HOUSE / pays[i] * 100))
             lines.append(f"**{LETTERS[i]}. {label}**{mark}\n`{chance:>2}%` · pays **{pays[i]:g}x** · {backers} bet{'s' if backers != 1 else ''}")
         pot = sum(a for _, a, _ in market["bets"].values())
-        source = "🌍" if market["kind"] == "world" else "🏠"
+        source = {"world": "🌍", "draw": "🎲"}.get(market["kind"], "🏠")
         color = (WIN if market["answer"] >= 0 else EVEN) if settled else PLAYING
         embed = card(guild.me, f"🔮 {source} {market['question']}", "\n".join(lines) + (f"\n\n{result}" if result else ""), color=color)
         embed.add_field(name="Bet so far", value=fmt(pot), inline=True)
         embed.add_field(name="Bettors", value=str(len(market["bets"])), inline=True)
         if not settled:
             embed.set_footer(text=f"Tap an outcome to bet (up to {PREDICT_MAX_BET:,}) · a right bet pays what it says · "
-                                  f"closes {PREDICT_CLOSE}, settles {PREDICT_SETTLE}")
+                                  f"closes {market.get('close') or PREDICT_CLOSE}, settles {PREDICT_SETTLE}")
         return embed
 
     def buttons(self, date: str, market: dict) -> discord.ui.View:
@@ -395,8 +451,9 @@ class Predictions:
         market = next((m for m in (data or {}).get("markets", []) if m["id"] == market_id), None)
         if market is None or data["status"] != "open":
             return "That market is closed."
-        if date != now.date().isoformat() or now >= at(now, PREDICT_CLOSE):
-            return f"Bets closed at {PREDICT_CLOSE}. Results come at {PREDICT_SETTLE}."
+        closes = data.get("close") or PREDICT_CLOSE
+        if date != now.date().isoformat() or now >= at(now, closes):
+            return f"Bets closed at {closes}. Results come at {PREDICT_SETTLE}."
         if str(member.id) in market["bets"]:
             picked, amount, _ = market["bets"][str(member.id)]
             return f"You already put {fmt(amount)} on {market['outcomes'][picked]}."
@@ -425,6 +482,8 @@ class Predictions:
         for market in data["markets"]:
             if market["kind"] == "world":
                 outcome, why = found.get(market["id"], (-1, "The result wasn't clearly reported."))
+            elif market["kind"] == "draw":
+                outcome, why = draw(market)
             else:
                 value, why = server_value(self.store, guild.id, market["kind"], span, self.messages_on(guild.id, day.date().isoformat()))
                 if market.get("fixed"):

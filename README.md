@@ -290,6 +290,9 @@ Every day at `PREDICT_OPEN` (10:00) the bot posts up to `PREDICT_MARKETS` (3) Po
 
 - **Real world** (`PREDICT_WORLD_MARKETS`, up to 2 a day): only when the `/settleargument` model can search the web (Gemini). One search writes them in the morning (games tonight, a star's stat line, the weather, a big event, worded like the group chat would) with the AI's estimate of each outcome's chance, and one search settles them all at night. Without real search results nothing is made up, and a result that can't be confirmed gives every bet back.
 - **About the server** (no AI): how many messages, how many timeouts, the biggest aura swing, the biggest casino loss. The ranges and chances come from the past 14 days, and a market where any outcome came up on under 15% of those days is skipped, so it's never a sure thing. A quiet new server may get none.
+- **House draws** (no AI), to fill any empty slots so a day is never empty: tonight's 1–100 roll, a roulette spin, or five coin flips, drawn by the bot when the markets settle, at exact odds.
+
+If the markets didn't go up (the bot was offline at 10:00, say), a mod can run `/spreader markets` to post them now; posted late, bets stay open at least two hours.
 
 ### The Daily Aura
 
@@ -318,6 +321,7 @@ Only people with the **Timeout Members** permission can use these.
 |---|---|
 | `/spreader history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
 | `/spreader reset @user` | Resets their offense count to zero (a timeout they're in keeps running) |
+| `/spreader markets` | Post today's prediction markets now, if they didn't go up. |
 | `/spreader resetall` | Resets everyone's offense count in the server |
 | `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |
 

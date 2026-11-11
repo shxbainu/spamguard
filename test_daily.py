@@ -21,6 +21,7 @@ class FakeChannel:
     def __init__(self):
         self.guild = SimpleNamespace(id=1, me=person(99, "bot"))
         self.sent, self.views, self.edits = [], [], []
+        self.mention = "#casino"
 
     async def send(self, content=None, embed=None, view=None, **kwargs):
         self.sent.append(embed)
@@ -158,12 +159,45 @@ class MarketDayTests(unittest.TestCase):
         self.assertEqual(asyncio.run(p.world_markets(DAY, 2)), [])
         self.assertEqual(p.bot.settler.calls, 0, "no search model, no AI call")
 
-    def test_quiet_server_without_search_skips_the_day(self):
+    def test_quiet_server_without_search_gets_house_draws(self):
         p, channel = predictor(temp_store())
         asyncio.run(p.tick())
-        self.assertEqual(p.load(1, "2026-11-10")["status"], "skipped")
+        data = p.load(1, "2026-11-10")
+        self.assertEqual([m["kind"] for m in data["markets"]], ["draw"] * 3)
+        self.assertEqual(len(channel.sent), 3)
         asyncio.run(p.tick())
-        self.assertEqual(channel.sent, [], "nothing posted, and no retry every minute")
+        self.assertEqual(len(channel.sent), 3, "once a day")
+        ben = bettors(channel)[0]
+        p.place(ben, "2026-11-10", 0, 0, "100")
+        p.today = lambda: DAY.replace(hour=23, minute=45)
+        asyncio.run(p.tick())
+        market = p.load(1, "2026-11-10")["markets"][0]
+        self.assertIn(market["answer"], range(len(market["outcomes"])), "the bot drew a result")
+        won = market["answer"] == 0
+        self.assertEqual(store_total := p.store.aura_total(1, 5), 400 + (int(100 * market["pays"][0]) if won else 0), store_total)
+
+    def test_post_now(self):
+        p, channel = predictor(temp_store())
+        p.save(1, "2026-11-10", {"status": "skipped", "markets": []})  # what an old version left today
+        p.today = lambda: DAY.replace(hour=17, minute=10)
+        said = asyncio.run(p.post_now())
+        self.assertIn("Posted 3 markets", said)
+        self.assertIn("bets close 19:10", said, "two hours to bet when it's posted late")
+        self.assertEqual(p.load(1, "2026-11-10")["close"], "19:10")
+        ben = bettors(channel)[0]
+        p.today = lambda: DAY.replace(hour=18, minute=30)
+        self.assertNotIsInstance(p.place(ben, "2026-11-10", 0, 0, "10"), str, "still open after the usual 18:00")
+        self.assertIn("already up", asyncio.run(p.post_now()))
+        p2, _ = predictor(temp_store())
+        p2.today = lambda: DAY.replace(hour=23, minute=10)
+        self.assertIn("Too late", asyncio.run(p2.post_now()))
+
+    def test_house_draws(self):
+        import random
+        for market in predict.HOUSE_MARKETS:
+            seen = {predict.draw(market, random.Random(i))[0] for i in range(500)}
+            self.assertEqual(seen, set(range(len(market["outcomes"]))), market["draw"])
+            self.assertAlmostEqual(sum(market["shares"]), 1)
 
     def test_full_day(self):
         store = temp_store()
@@ -171,9 +205,9 @@ class MarketDayTests(unittest.TestCase):
         ben, kai, luke = bettors(channel)
         asyncio.run(p.tick())
         data = p.load(1, "2026-11-10")
-        self.assertEqual([m["kind"] for m in data["markets"]], ["world", "world"], "nothing about the server yet")
-        self.assertEqual(len(channel.sent), 2)
-        self.assertEqual([m["message_id"] for m in data["markets"]], [1001, 1002])
+        self.assertEqual([m["kind"] for m in data["markets"]], ["world", "world", "draw"], "nothing about the server yet, so a draw")
+        self.assertEqual(len(channel.sent), 3)
+        self.assertEqual([m["message_id"] for m in data["markets"]], [1001, 1002, 1003])
         buttons = channel.views[1].children
         self.assertEqual([b.item.label for b in buttons], ["A. Yes", "B. No"])
         self.assertEqual(buttons[1].item.custom_id, "predict:2026-11-10:1:1")
@@ -196,7 +230,8 @@ class MarketDayTests(unittest.TestCase):
         self.assertEqual(data["status"], "settled")
         self.assertEqual(store.aura_total(1, 6), 500 - 50 + int(50 * data["markets"][0]["pays"][2]), "kai had 30+")
         self.assertEqual(store.aura_total(1, 5), 500, "rain unknown, so ben's bet came back")
-        self.assertEqual(len(channel.edits), 2, "both market posts show the result and lose their buttons")
+        self.assertIn(data["markets"][2]["answer"], range(len(data["markets"][2]["outcomes"])))
+        self.assertEqual(len(channel.edits), 3, "every market post shows the result and loses its buttons")
         self.assertIsNone(channel.edits[0][1]["view"])
         self.assertIn("Wemby had 34", channel.edits[0][1]["embed"].description)
         self.assertIn("Today's results", channel.sent[-1].title)

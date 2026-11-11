@@ -687,6 +687,13 @@ async def reset_cmd(interaction: discord.Interaction, user: discord.Member) -> N
     await interaction.response.send_message(f"Reset {user.mention}'s offenses. Their next punishment would be a {next_step}.", ephemeral=True)
 
 
+@spamguard_commands.command(name="markets", description="Post today's prediction markets now (if they didn't go up)")
+async def markets_cmd(interaction: discord.Interaction) -> None:
+    bot: SpamGuard = interaction.client
+    await interaction.response.defer(ephemeral=True, thinking=True)  # a web search can take a few seconds
+    await interaction.followup.send(await bot.predictions.post_now(), ephemeral=True)
+
+
 @spamguard_commands.command(name="resetall", description="Reset everyone's offense count to zero")
 async def resetall_cmd(interaction: discord.Interaction) -> None:
     bot: SpamGuard = interaction.client
