@@ -228,32 +228,6 @@ class RepTests(unittest.TestCase):
         self.assertIn("How you feel about ben", judge.requests[0][0])
 
 
-class GrantTests(unittest.TestCase):
-    def test_admin_grant(self):
-        import bot
-        store, sent = temp_store(), []
-
-        async def send_message(text=None, **kwargs):
-            sent.append(text)
-        shx = person(5, "shxbainu")
-        shx.mention = "@shxbainu"
-        interaction = SimpleNamespace(client=SimpleNamespace(store=store), guild_id=1, user=person(9, "admin"),
-                                      response=SimpleNamespace(send_message=send_message))
-        asyncio.run(bot.grantaura_cmd.callback(interaction, shx, 1250))
-        self.assertEqual(store.aura_total(1, 5), 1250)
-        self.assertIn("Gave **1,250 aura**", sent[0])
-        asyncio.run(bot.grantaura_cmd.callback(interaction, shx, -250, "oops"))
-        self.assertEqual(store.aura_total(1, 5), 1000)
-        self.assertEqual(store.aura_history(1, 5)[0]["reason"], "oops")
-        member = lambda admin: SimpleNamespace(user=SimpleNamespace(guild_permissions=SimpleNamespace(administrator=admin)))
-        self.assertTrue(bot.can_grant(member(True)))
-        with unittest.mock.patch.object(bot, "GRANT_AURA_OPEN", False):
-            with self.assertRaises(bot.app_commands.MissingPermissions):
-                bot.can_grant(member(False))
-        with unittest.mock.patch.object(bot, "GRANT_AURA_OPEN", True):
-            self.assertTrue(bot.can_grant(member(False)), "everyone while it's opened up")
-
-
 class DuelLogicTests(unittest.TestCase):
     def test_split_or_steal(self):
         self.assertEqual(duels.split_steal_payouts("split", "split", 100)[:2], (125, 125))

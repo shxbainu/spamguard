@@ -241,7 +241,7 @@ class SpamGuard(discord.Client):
 
     async def setup_hook(self) -> None:
         for command in (
-            spamguard_commands, grantaura_cmd, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
+            spamguard_commands, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
             debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
             *casino.COMMANDS, *duels.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
         ):
@@ -701,36 +701,6 @@ async def markets_cmd(interaction: discord.Interaction) -> None:
     bot: SpamGuard = interaction.client
     await interaction.response.defer(ephemeral=True, thinking=True)  # a web search can take a few seconds
     await interaction.followup.send(await bot.predictions.post_now(), ephemeral=True)
-
-
-# Lets everyone use /grantaura while it's set (for a quick one-off); otherwise only server admins can.
-GRANT_AURA_OPEN = (os.getenv("GRANT_AURA_OPEN") or "false").strip().lower() in ("1", "true", "yes", "on")
-
-
-def can_grant(interaction: discord.Interaction) -> bool:
-    if GRANT_AURA_OPEN or interaction.user.guild_permissions.administrator:
-        return True
-    raise app_commands.MissingPermissions(["administrator"])
-
-
-@app_commands.command(name="grantaura", description="Give someone aura, or take it with a negative amount (admins, unless opened up)")
-@app_commands.describe(user="Who", amount="How much (negative takes it away)", reason="Shows in their aura history")
-@app_commands.guild_only()
-@app_commands.check(can_grant)
-async def grantaura_cmd(interaction: discord.Interaction, user: discord.Member, amount: app_commands.Range[int, -100000, 100000],
-                        reason: Optional[str] = None) -> None:
-    bot: SpamGuard = interaction.client
-    if amount == 0 or user.bot:
-        await interaction.response.send_message("Pick a person and a non-zero amount.", ephemeral=True)
-        return
-    why = (reason or f"granted by {interaction.user.display_name}")[:200]
-    bot.store.add_aura(interaction.guild_id, user.id, user.display_name, amount, "gift", why)
-    total = bot.store.aura_total(interaction.guild_id, user.id)
-    log.info("%s granted %s %+d aura (%s)", interaction.user, user, amount, why)
-    await interaction.response.send_message(
-        f"{'Gave' if amount > 0 else 'Took'} **{abs(amount):,} aura** {'to' if amount > 0 else 'from'} {user.mention}. "
-        f"They have {total:,} now.", allowed_mentions=discord.AllowedMentions.none(),
-    )
 
 
 @spamguard_commands.command(name="resetall", description="Reset everyone's offense count to zero")
