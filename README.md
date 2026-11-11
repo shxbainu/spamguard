@@ -195,7 +195,7 @@ The bot only works while it's running. To keep it online without your computer, 
 | `/grass` | How long the grass-check person has been on Discord and gaming today. |
 | Right-click a message → **Apps → Fact check**, or `/factcheck claim` | A formal fact-check with a rating and web sources. |
 | `/coinflip` `/slots` `/roulette` `/blackjack` `/higherlower` | Casino games; bet aura. |
-| `/duel @user bet [game]` | You both bet the same aura and play quick draw, 10 seconds, split or steal, or pure luck. |
+| `/duel @user bet [game]` | You both bet the same aura and play quick draw, 10 seconds, split or steal, or pure luck. The winner gets +2x their bet (bet 100: +200) and the loser loses theirs. |
 | `/daily` | Free aura once a day. |
 | `/predict` | Today's prediction markets; bet by tapping an outcome on the market posts. |
 | `/rep [user]` | How the bot feels about someone, from -100 to 100. |
@@ -256,9 +256,9 @@ Duel games:
 
 | Game | How it works |
 |---|---|
-| 🤠 Quick draw | Wait for **DRAW!**, then hit the button first; clicking early loses |
-| ⏱️ 10 seconds | A hidden clock starts; hit **Stop** when you think 10 seconds have passed, closest wins. Timing starts once Discord has the message and each click counts when it reaches the bot, so both players lose the same network delay |
-| 🤝 Split or steal | Pick in secret. Both split: each gets their bet back plus 25%. One steals: they take the pot. Both steal: both lose it. Not picking counts as split |
+| 🤠 Quick draw | Wait for **DRAW!**, then hit the button first; clicking early loses. Timed with Discord's own timestamps, so lag to the bot doesn't count and near-ties go to whoever Discord heard first; the result shows both reaction times |
+| ⏱️ 10 seconds | A hidden clock starts; hit **Stop** when you think 10 seconds have passed, closest wins. Timed with Discord's own timestamps (when the message landed, when Discord got each click), so lag to the bot doesn't count |
+| 🤝 Split or steal | Pick in secret. Both split: each gets their bet back plus 25%. One steals: they get +2x their bet. Both steal: both lose it. Not picking counts as split |
 | 🎲 Pure luck | 50/50 |
 
 If nobody wins (time runs out), both bets go back.
@@ -324,6 +324,7 @@ Only people with the **Timeout Members** permission can use these.
 | `/spreader history @user` | Their offense count, AI strikes, next punishment, and last 5 punishments |
 | `/spreader reset @user` | Resets their offense count to zero (a timeout they're in keeps running) |
 | `/spreader markets` | Post today's prediction markets now, if they didn't go up. |
+| `/spreader grantaura @user amount [reason]` | Give someone aura, or take it with a negative amount. Server admins only. |
 | `/spreader resetall` | Resets everyone's offense count in the server |
 | `/spreader pardon @user` | Ends their timeout and resets their offense count to zero |
 

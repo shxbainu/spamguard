@@ -318,6 +318,9 @@ class SpamGuard(discord.Client):
         if isinstance(error, app_commands.CommandOnCooldown):
             await interaction.response.send_message(f"Slow down, try again in {error.retry_after:.0f}s.", ephemeral=True)
             return
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("Only server admins can use that.", ephemeral=True)
+            return
         log.exception("Slash command failed", exc_info=error)
         reply = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
         await reply("Something went wrong running that command.", ephemeral=True)
@@ -698,6 +701,25 @@ async def markets_cmd(interaction: discord.Interaction) -> None:
     bot: SpamGuard = interaction.client
     await interaction.response.defer(ephemeral=True, thinking=True)  # a web search can take a few seconds
     await interaction.followup.send(await bot.predictions.post_now(), ephemeral=True)
+
+
+@spamguard_commands.command(name="grantaura", description="Give someone aura, or take it with a negative amount (admins only)")
+@app_commands.describe(user="Who", amount="How much (negative takes it away)", reason="Shows in their aura history")
+@app_commands.checks.has_permissions(administrator=True)
+async def grantaura_cmd(interaction: discord.Interaction, user: discord.Member, amount: app_commands.Range[int, -100000, 100000],
+                        reason: Optional[str] = None) -> None:
+    bot: SpamGuard = interaction.client
+    if amount == 0 or user.bot:
+        await interaction.response.send_message("Pick a person and a non-zero amount.", ephemeral=True)
+        return
+    why = (reason or f"granted by {interaction.user.display_name}")[:200]
+    bot.store.add_aura(interaction.guild_id, user.id, user.display_name, amount, "gift", why)
+    total = bot.store.aura_total(interaction.guild_id, user.id)
+    log.info("%s granted %s %+d aura (%s)", interaction.user, user, amount, why)
+    await interaction.response.send_message(
+        f"{'Gave' if amount > 0 else 'Took'} **{abs(amount):,} aura** {'to' if amount > 0 else 'from'} {user.mention}. "
+        f"They have {total:,} now.", allowed_mentions=discord.AllowedMentions.none(),
+    )
 
 
 @spamguard_commands.command(name="resetall", description="Reset everyone's offense count to zero")

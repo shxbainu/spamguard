@@ -34,15 +34,28 @@ class FakeResponse:
 
 
 class FakeMessage:
-    def __init__(self):
+    def __init__(self, edited_at=None):
         self.edits = []
+        self.edited_at = edited_at  # what Discord says the latest edit's time was
 
     async def edit(self, **kwargs):
         self.edits.append(kwargs)
+        return SimpleNamespace(edited_at=self.edited_at)
 
 
-def press(user, message=None, client=None):
-    return SimpleNamespace(user=user, response=FakeResponse(), message=message or FakeMessage(), channel_id=7, client=client)
+def at_second(seconds):
+    """A Discord timestamp, `seconds` after a fixed moment."""
+    from datetime import datetime, timedelta, timezone
+    return datetime(2026, 11, 11, 20, 0, tzinfo=timezone.utc) + timedelta(seconds=seconds)
+
+
+def press(user, message=None, client=None, created_at=None):
+    message = message or FakeMessage()
+
+    async def original_response():
+        return message
+    return SimpleNamespace(user=user, response=FakeResponse(), message=message, channel_id=7, client=client,
+                           created_at=created_at, original_response=original_response)
 
 
 def last_title(embed):
@@ -215,11 +228,32 @@ class RepTests(unittest.TestCase):
         self.assertIn("How you feel about ben", judge.requests[0][0])
 
 
+class GrantTests(unittest.TestCase):
+    def test_admin_grant(self):
+        import bot
+        store, sent = temp_store(), []
+
+        async def send_message(text=None, **kwargs):
+            sent.append(text)
+        shx = person(5, "shxbainu")
+        shx.mention = "@shxbainu"
+        interaction = SimpleNamespace(client=SimpleNamespace(store=store), guild_id=1, user=person(9, "admin"),
+                                      response=SimpleNamespace(send_message=send_message))
+        asyncio.run(bot.grantaura_cmd.callback(interaction, shx, 1250))
+        self.assertEqual(store.aura_total(1, 5), 1250)
+        self.assertIn("Gave **1,250 aura**", sent[0])
+        asyncio.run(bot.grantaura_cmd.callback(interaction, shx, -250, "oops"))
+        self.assertEqual(store.aura_total(1, 5), 1000)
+        self.assertEqual(store.aura_history(1, 5)[0]["reason"], "oops")
+        self.assertTrue(any(getattr(c, "__qualname__", "").startswith("has_permissions") for c in bot.grantaura_cmd.checks),
+                        "admins only")
+
+
 class DuelLogicTests(unittest.TestCase):
     def test_split_or_steal(self):
         self.assertEqual(duels.split_steal_payouts("split", "split", 100)[:2], (125, 125))
-        self.assertEqual(duels.split_steal_payouts("steal", "split", 100)[:2], (200, 0))
-        self.assertEqual(duels.split_steal_payouts("split", "steal", 100)[:2], (0, 200))
+        self.assertEqual(duels.split_steal_payouts("steal", "split", 100)[:2], (300, 0), "bet back plus double")
+        self.assertEqual(duels.split_steal_payouts("split", "steal", 100)[:2], (0, 300))
         self.assertEqual(duels.split_steal_payouts("steal", "steal", 100)[:2], (0, 0))
 
     def test_ten_seconds_closest_wins(self):
@@ -271,7 +305,7 @@ class DuelGameTests(unittest.TestCase):
             return game
         game, _ = self.run_game(duels.SplitOrSteal, steps)
         self.assertTrue(game.done)
-        self.assertEqual(self.totals(), (1100, 900))
+        self.assertEqual(self.totals(), (1200, 900), "stealer +200, the other -100")
 
     def test_split_or_steal_no_pick_counts_as_split(self):
         async def steps(game):
@@ -281,43 +315,72 @@ class DuelGameTests(unittest.TestCase):
         self.run_game(duels.SplitOrSteal, steps)
         self.assertEqual(self.totals(), (1025, 1025))
 
+    def test_winning_a_bet_of_100_is_plus_200(self):
+        async def steps(game):
+            return game
+        game, _ = self.run_game(duels.DuelGame, steps)  # pure luck
+        winner_total = max(self.totals())
+        self.assertEqual(sorted(self.totals()), [900, 1200], "winner +200, loser -100")
+        card = game.message.edits[-1]["embed"] if game.message.edits else None
+        self.assertEqual(winner_total, 1200)
+
     def test_quick_draw_early_click_loses(self):
         async def steps(game):
-            click = press(self.a)
+            click = press(self.a, created_at=at_second(1))
             await game.trigger.callback(click)
             return click
         _, click = self.run_game(duels.QuickDraw, steps)
         self.assertIn("kai wins", last_title(click.response.edits[0]["embed"]))
-        self.assertEqual(self.totals(), (900, 1100))
+        self.assertEqual(self.totals(), (900, 1200))
 
-    def test_quick_draw_first_after_draw_wins(self):
+    def test_quick_draw_uses_discords_clock(self):
         async def steps(game):
+            game.message.edited_at = at_second(5)  # DRAW! landed at 5.000s
             await game.draw_later(0)
-            first, second = press(self.b), press(self.a)
-            if await game.interaction_check(first):
-                await game.trigger.callback(first)
-            self.assertFalse(await game.interaction_check(second), "too late")
-            return first
-        _, click = self.run_game(duels.QuickDraw, steps)
-        self.assertIn("kai wins", last_title(click.response.edits[0]["embed"]))
-        self.assertEqual(self.totals(), (900, 1100))
+            # Kai's click reaches the bot first, but Discord got Ben's earlier: Ben wins.
+            kai = press(self.b, created_at=at_second(5.31))
+            ben = press(self.a, created_at=at_second(5.24))
+            await asyncio.gather(game.trigger.callback(kai), game.trigger.callback(ben))
+            return game
+        game, _ = self.run_game(duels.QuickDraw, steps)
+        result = game.message.edits[-1]["embed"]
+        self.assertIn("ben wins", last_title(result))
+        self.assertIn("240 ms", result.description)
+        self.assertIn("kai took 310 ms", result.description)
+        self.assertEqual(self.totals(), (1200, 900))
 
-    def test_ten_seconds(self):
+    def test_quick_draw_click_before_the_edit_landed_is_early(self):
         async def steps(game):
-            game.started_at = time.monotonic() - 9.8
-            await game.stop_clock.callback(press(self.a))
-            again = press(self.a)
+            game.message.edited_at = at_second(5)
+            await game.draw_later(0)
+            click = press(self.a, created_at=at_second(4.99))  # Discord got it before DRAW! was showing
+            await game.trigger.callback(click)
+            return click
+        _, click = self.run_game(duels.QuickDraw, steps)
+        self.assertIn("drew too early", click.response.edits[0]["embed"].description)
+        self.assertEqual(self.totals(), (900, 1200))
+
+    def test_ten_seconds_uses_discords_clock(self):
+        async def steps(game):
+            await game.stop_clock.callback(press(self.a, created_at=at_second(9.8)))
+            again = press(self.a, created_at=at_second(10))
             await game.stop_clock.callback(again)
             self.assertIn("already stopped", again.response.sent[0])
-            game.started_at -= 1.0  # kai stops at about 10.8s
-            last = press(self.b)
+            last = press(self.b, created_at=at_second(10.8))
             await game.stop_clock.callback(last)
             return last
-        _, click = self.run_game(duels.TenSeconds, steps)
+
+        async def go():
+            game = duels.TenSeconds(self.a, self.b, 100, self.store)
+            message = FakeMessage(edited_at=at_second(0))  # the clock started when this landed
+            await game.start(press(self.b, message=message))
+            return await steps(game)
+        click = asyncio.run(go())
         embed = click.response.edits[0]["embed"]
         self.assertIn("ben wins", last_title(embed))
-        self.assertIn("9.8", embed.description)
-        self.assertEqual(self.totals(), (1100, 900))
+        self.assertIn("9.80s", embed.description)
+        self.assertIn("10.80s", embed.description)
+        self.assertEqual(self.totals(), (1200, 900))
 
     def test_ten_seconds_timeouts(self):
         async def one(game):
@@ -325,7 +388,7 @@ class DuelGameTests(unittest.TestCase):
             await game.on_timeout()
             return game
         game, _ = self.run_game(duels.TenSeconds, one)
-        self.assertEqual(self.totals(), (900, 1100), "the only one who stopped wins")
+        self.assertEqual(self.totals(), (900, 1200), "the only one who stopped wins")
         self.assertIn("never stopped", game.message.edits[-1]["embed"].description)
 
         self.setUp()

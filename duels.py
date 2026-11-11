@@ -23,13 +23,20 @@ RULES = {
     "tenseconds": "The clock starts now, but you can't see it. Hit **Stop** when you think exactly 10 seconds have "
                   "passed. Closest wins.",
     "splitsteal": "Talk it out, then pick in secret. Both split: you each get your bet back **plus 25%**. One steals: "
-                  "they take the whole pot. Both steal: you both lose it all.",
+                  "they get +2x their bet. Both steal: you both lose it all.",
     "luck": "A coin flip decides it.",
 }
 SKILL_GAMES = ["quickdraw", "tenseconds", "splitsteal"]
 
 TARGET_SECONDS = 10.0
 SPLIT_BONUS = 1.25
+WIN_MULTIPLIER = 3  # the winner gets their bet back plus double it (+2x); the loser loses their bet
+CLICK_WINDOW = 0.6  # seconds to wait for the other quick-draw click, so the earlier one by Discord's clock wins
+
+
+def stamp(when) -> float | None:
+    """A Discord timestamp (a click's or an edit's) in seconds, or None."""
+    return when.timestamp() if when is not None else None
 
 
 def split_steal_payouts(a: str, b: str, bet: int) -> tuple[int, int, str]:
@@ -39,7 +46,7 @@ def split_steal_payouts(a: str, b: str, bet: int) -> tuple[int, int, str]:
         return each, each, "Both split."
     if a == b == "steal":
         return 0, 0, "Both stole, so nobody gets anything."
-    return (bet * 2, 0, "") if a == "steal" else (0, bet * 2, "")
+    return (bet * WIN_MULTIPLIER, 0, "") if a == "steal" else (0, bet * WIN_MULTIPLIER, "")
 
 
 class DuelGame(discord.ui.View):
@@ -60,7 +67,7 @@ class DuelGame(discord.ui.View):
     def playing(self, body: str) -> discord.Embed:
         embed = card(self.challenger, f"⚔️ {GAME_NAMES[self.game]}", body, color=PLAYING)
         embed.add_field(name="Players", value=f"{self.challenger.display_name} vs {self.target.display_name}", inline=True)
-        embed.add_field(name="Pot", value=fmt(self.bet * 2), inline=True)
+        embed.add_field(name="Winner gets", value=f"+{fmt(self.bet * (WIN_MULTIPLIER - 1))}", inline=True)
         return embed
 
     def settle(self, payouts: dict[int, int], headline: str, how: str, lead: discord.Member | None = None) -> discord.Embed:
@@ -80,7 +87,7 @@ class DuelGame(discord.ui.View):
         return embed
 
     def finish(self, winner: discord.Member, how: str) -> discord.Embed:
-        return self.settle({winner.id: self.bet * 2}, f"{winner.display_name} wins", how, lead=winner)
+        return self.settle({winner.id: self.bet * WIN_MULTIPLIER}, f"{winner.display_name} wins", how, lead=winner)
 
     def refund(self, why: str) -> discord.Embed:
         return self.settle({m.id: self.bet for m in self.players}, "Nobody wins", f"{why} Both bets went back.")
@@ -112,11 +119,18 @@ class DuelGame(discord.ui.View):
 
 
 class QuickDraw(DuelGame):
+    """Timed with Discord's own clock: when Discord received each click versus when the DRAW! edit landed, so
+    neither player's lag to the bot counts, and two near-simultaneous clicks go to whoever was really first."""
+
     game = "quickdraw"
 
     def __init__(self, *args):
         super().__init__(*args, timeout=30)
-        self.drawn_at: float | None = None
+        self.drawn_at: float | None = None  # Discord's time of the DRAW! edit
+        self.drawn = asyncio.Event()
+        self.drawing = False
+        self.clicks: dict[int, float] = {}  # user -> when Discord got their click
+        self.judging = False
 
     async def start(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(content=None, embed=self.playing(f"{RULES[self.game]}\n## Wait for it…"), view=self)
@@ -127,19 +141,45 @@ class QuickDraw(DuelGame):
         await asyncio.sleep(delay)
         if self.done:
             return
+        self.drawing = True
         self.trigger.label, self.trigger.style = "DRAW!", discord.ButtonStyle.danger
-        await self.show(self.playing("## 🔫 DRAW!"), self)
-        # Counted from when Discord has the new message, so the time it takes to send doesn't count against anyone.
-        self.drawn_at = time.monotonic()
+        sent = None
+        if self.message:
+            try:
+                sent = await self.message.edit(content=None, embed=self.playing("## 🔫 DRAW!"), view=self)
+            except discord.HTTPException:
+                pass
+        self.drawn_at = stamp(getattr(sent, "edited_at", None)) or time.time()
+        self.drawn.set()
 
     @discord.ui.button(label="Wait…", style=discord.ButtonStyle.secondary, emoji="🤠")
     async def trigger(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if self.drawn_at is None:
+        clicked = stamp(interaction.created_at) or time.time()
+        if self.drawing and not self.drawn.is_set():
+            await self.drawn.wait()  # the DRAW! edit is on its way; compare once its time is known
+        if self.drawn_at is None or clicked < self.drawn_at:
             embed = self.finish(self.other(interaction.user), f"**{interaction.user.display_name}** drew too early.")
-        else:
-            ms = int((time.monotonic() - self.drawn_at) * 1000)
-            embed = self.finish(interaction.user, f"Drew first, about {ms:,} ms after the signal.")
-        await interaction.response.edit_message(embed=embed, view=None)
+            await interaction.response.edit_message(embed=embed, view=None)
+            return
+        if interaction.user.id in self.clicks:
+            await interaction.response.defer()
+            return
+        self.clicks[interaction.user.id] = clicked
+        await interaction.response.defer()
+        if self.judging:
+            return
+        self.judging = True
+        await asyncio.sleep(CLICK_WINDOW)  # let a near-simultaneous click arrive
+        if self.done:
+            return
+        first = min(self.clicks, key=self.clicks.get)
+        winner = next(m for m in self.players if m.id == first)
+        ms = round((self.clicks[first] - self.drawn_at) * 1000)
+        how = f"Drew in **{ms:,} ms**."
+        if len(self.clicks) == 2:
+            loser = self.other(winner)
+            how += f" {loser.display_name} took {round((self.clicks[loser.id] - self.drawn_at) * 1000):,} ms."
+        await self.show(self.finish(winner, how))
 
 
 def ten_seconds_result(times: dict[int, float]) -> tuple[int | None, dict[int, float]]:
@@ -166,10 +206,15 @@ class TenSeconds(DuelGame):
 
     async def start(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(content=None, embed=self.status(), view=self)
-        # The clock starts once Discord has the message (not while it's still being sent), and each click counts
-        # when it reaches the bot, so both players lose the same network delay.
-        self.started_at = time.monotonic()
         self.message = interaction.message
+        # Timed with Discord's clock: from when the edit landed to when Discord got each click, so nobody's lag to
+        # the bot counts.
+        self.started_at = time.time()
+        try:
+            shown = await interaction.original_response()
+            self.started_at = stamp(getattr(shown, "edited_at", None)) or self.started_at
+        except discord.HTTPException:
+            pass
 
     def result(self) -> discord.Embed:
         lines = []
@@ -194,7 +239,7 @@ class TenSeconds(DuelGame):
         if interaction.user.id in self.times:
             await interaction.response.send_message("You already stopped.", ephemeral=True)
             return
-        self.times[interaction.user.id] = time.monotonic() - self.started_at
+        self.times[interaction.user.id] = (stamp(interaction.created_at) or time.time()) - self.started_at
         if len(self.times) == 2:
             await interaction.response.edit_message(embed=self.result(), view=None)
         else:
@@ -332,7 +377,7 @@ async def duel_cmd(interaction: discord.Interaction, user: discord.Member, bet: 
     rules = f"\n{RULES[game]}" if game in RULES else ""
     embed = card(member, "⚔️ Duel challenge", f"**{member.display_name}** wants to duel **{user.display_name}**.\n**{which}**{rules}", color=PLAYING)
     embed.add_field(name="Bet each", value=fmt(amount), inline=True)
-    embed.add_field(name="Pot", value=fmt(amount * 2), inline=True)
+    embed.add_field(name="Winner gets", value=f"+{fmt(amount * (WIN_MULTIPLIER - 1))}", inline=True)
     embed.set_footer(text=f"{user.display_name} has 60 seconds to answer")
     await interaction.response.send_message(
         user.mention, embed=embed, view=view, allowed_mentions=discord.AllowedMentions(users=[user]),
