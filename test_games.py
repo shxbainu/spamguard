@@ -180,6 +180,34 @@ class RepTests(unittest.TestCase):
         self.assertEqual(aura.nice_aura(temp_store(), ben, "ur cooked", now=0, roll=lambda: 0, tone="nice"), 0,
                          "the AI can't call a known put-down nice")
 
+    def test_rude_costs_aura(self):
+        import rep
+        store, ben = temp_store(), person(5, "ben")
+        self.assertEqual(rep.classify("ur fat"), "rude")
+        self.assertEqual(rep.classify("fat chance lol"), None)
+        self.assertEqual(rep.classify("u lowk saved me", tone="nice"), "nice")
+        lost = aura.rude_aura(store, ben, "i hate you", now=0, roll=lambda: 0)
+        self.assertTrue(-aura.RUDE_POINTS[1] <= lost <= -aura.RUDE_POINTS[0])
+        self.assertEqual(aura.rude_aura(store, ben, "stfu", now=60, roll=lambda: 0), 0, "cooldown")
+        self.assertEqual(aura.rude_aura(temp_store(), ben, "stfu", now=0, roll=lambda: 0.9), 0, "the roll missed (75%)")
+        self.assertEqual(store.aura_history(1, 5)[0]["kind"], "rude")
+        self.assertEqual(store.aura_from_moments(1, 5), lost, "counts as aura from chat")
+
+    def test_bot_takes_aura_for_rudeness(self):
+        import bot
+        store = temp_store()
+        ben = person(5, "ben")
+        fake = SimpleNamespace(store=store)
+        message = SimpleNamespace(author=ben)
+        with unittest.mock.patch.object(aura, "RUDE_CHANCE", 1.0), unittest.mock.patch.object(aura, "NICE_CHANCE", 1.0):
+            lost = bot.SpamGuard.react_to(fake, message, "ur fat")
+            self.assertLess(lost, 0)
+            self.assertEqual(store.rep_score(1, 5), -5)
+            other = SimpleNamespace(author=person(6, "kai"))
+            gained = bot.SpamGuard.react_to(fake, other, "ty twin")
+            self.assertGreater(gained, 0)
+            self.assertEqual(bot.SpamGuard.react_to(fake, SimpleNamespace(author=person(7, "luke")), "whats up"), 0)
+
     def test_chat_prompt_gets_the_opinion(self):
         from test_features import StubJudge
         judge = StubJudge("yo")

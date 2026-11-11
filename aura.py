@@ -34,7 +34,7 @@ LEVEL_POINTS = {
 DEBATE_POINTS = 100
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "daily": "daily", "nice": "was nice to the bot", "gift": "gift", "shop": "shop",
+    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "daily": "daily", "nice": "was nice to the bot", "rude": "was rude to the bot", "gift": "gift", "shop": "shop",
 }
 # What the bot is reacting to, for the one-liner it writes; {size} is how big the moment was.
 SITUATIONS = {
@@ -85,6 +85,10 @@ NOT_NICE = re.compile(
     r"idiot|clanker|mid|annoying|but|cooked|chopped|no aura|negative aura|bum|larp(?:ing|er)?)\b|/s\b|-\s?\d*\s?aura",
     re.IGNORECASE,
 )
+# Being rude to the bot costs a little the same way.
+RUDE_CHANCE = float(os.getenv("RUDE_AURA_CHANCE") or 0.75)
+RUDE_POINTS = (10, 25)
+RUDE_FALLBACK = ["watch it", "ok bye", "noted", "L", "aight bet"]
 NICE_FALLBACK = ["appreciate u", "ok ur cool", "finally someone nice", "u good fr", "ok i fw u"]
 
 
@@ -112,6 +116,24 @@ def nice_aura(store, member: discord.Member, text: str, now: float | None = None
         return 0
     points = random.randint(*NICE_POINTS)
     store.add_aura(member.guild.id, member.id, member.display_name, points, "nice", "was nice to the bot", text[:300], now)
+    return points
+
+
+def rude_aura(store, member: discord.Member, text: str, now: float | None = None, roll=random.random) -> int:
+    """Aura lost for being rude to the bot (a negative number, or 0 if they lost some recently or the roll misses).
+    The caller decides it was rude. Like nice aura, any rude message starts the cooldown."""
+    if not AURA_ENABLED:
+        return 0
+    now = time.time() if now is None else now
+    key = f"rude:{member.guild.id}:{member.id}"
+    last = store.get_state(key)
+    if last and now - float(last) < NICE_COOLDOWN_MINUTES * 60:
+        return 0
+    store.set_state(key, str(now))
+    if roll() >= RUDE_CHANCE:
+        return 0
+    points = -random.randint(*RUDE_POINTS)
+    store.add_aura(member.guild.id, member.id, member.display_name, points, "rude", "was rude to the bot", text[:300], now)
     return points
 
 
@@ -198,7 +220,7 @@ aura_commands = app_commands.Group(name="aura", description="Aura points", guild
 
 LABELS = {
     "comeback": "Comeback", "callout": "Called someone out", "called_out": "Got called out",
-    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "daily": "Daily", "nice": "Nice to the bot", "gift": "Gift", "shop": "Shop",
+    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "daily": "Daily", "nice": "Nice to the bot", "rude": "Rude to the bot", "gift": "Gift", "shop": "Shop",
 }
 
 

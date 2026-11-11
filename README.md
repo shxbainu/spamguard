@@ -224,6 +224,8 @@ Each person can gain or lose aura from a message at most once every `AURA_COOLDO
 
 **Being nice to the bot:** thanking it or complimenting it ("ty", "good bot", "ur funny") in a mention, a reply to it, or the chat channel has a 75% chance (`NICE_AURA_CHANCE`) of earning +10 to +25, at most once every 30 minutes (`NICE_AURA_COOLDOWN_MINUTES`). It's spotted the same way as reputation (the slang list, then the chat AI's read), so it costs no extra AI calls; sarcasm like "thanks for nothing" or "thanks but ur dumb" doesn't count, and every nice message starts the cooldown, so spamming "thanks" doesn't beat the odds. The points are tacked onto the bot's reply. Turn it off with `AURA_ENABLED=false`.
 
+**Being rude to the bot** ("ur fat", "i hate you", "stfu", "ur mid") works the same way in reverse: a 75% chance (`RUDE_AURA_CHANCE`) of losing 10 to 25, at most once every 30 minutes, shown on the bot's reply.
+
 ### Fact check
 
 Right-click a message → **Apps → Fact check** (or `/factcheck claim:"..."`). It's written like a published fact-check: the claim, a rating (true, mostly true, misleading, false, unverifiable, or opinion), the evidence, a correction if needed, and **sources**. Each message can only be checked once, and each person can check once every 30 seconds. A message rated **false** costs its author 100 aura and gives the person who checked it 50.

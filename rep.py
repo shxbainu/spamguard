@@ -30,7 +30,8 @@ RUDE = re.compile(
     r"\b(?:stfu|shut (?:the fuck |tf )?up|clanker|(?:dumb|stupid|bad|trash|useless|worst|mid|cooked|chopped|l) (?:ass )?bot|"
     rf"{YOU} (?:so |really |actually |lowk |deadass |lowkey |hella )?"
     r"(?:dumb|stupid|trash|garbage|mid|annoying|useless|bad|ass|cooked|chopped|a clown|an idiot|a bum|bum|an npc|npc|"
-    r"slow|not funny|not tuff|lame|weird|corny|washed)|"
+    r"slow|not funny|not tuff|lame|weird|corny|washed|fat|a fatass|fatass|ugly|a loser|loser|a bitch|a dick|an asshole|"
+    r"irrelevant|a nerd|a joke|pathetic|cringe|broke|short|bald|a waste|so bad)|"
     rf"{YOU} (?:got|have|has) (?:no|negative|zero|0) aura|no aura|negative aura|"
     rf"i mog (?:you|u)|stop larp(?:ing)?|{YOU} larp(?:ing)?|"
     r"i hate (?:you|u)|deadass i hate|nobody asked|who asked|kys|fuck (?:you|u|off)|screw (?:you|u)|go away|get lost|"
@@ -59,13 +60,22 @@ def level(score: int) -> tuple[str, str]:
     return LEVELS[-1][1], LEVELS[-1][2]
 
 
+def classify(text: str, tone: str | None = None) -> str | None:
+    """"nice", "rude" or None for a message to the bot. The group's slang list goes first, since it's more
+    reliable on what it knows; the chat AI's read (`tone`) covers wording it doesn't."""
+    if is_rude(text):
+        return "rude"
+    if is_nice(text):
+        return "nice"
+    return tone if tone in ("nice", "rude") else None
+
+
 def react(store, member: discord.Member, text: str, now: float | None = None, tone: str | None = None) -> int:
     """Moves the bot's opinion of someone who's talking to it, if they were nice or rude; returns the change.
     `tone` is the chat AI's read of the message ("nice", "rude" or "neutral"); without one the wording decides."""
     if not REP_ENABLED:
         return 0
-    # The group's slang list is more reliable on what it knows; the AI's read covers wording it doesn't.
-    change = RUDE_REP if is_rude(text) else NICE_REP if is_nice(text) else {"nice": NICE_REP, "rude": RUDE_REP}.get(tone, 0)
+    change = {"nice": NICE_REP, "rude": RUDE_REP}.get(classify(text, tone), 0)
     if not change:
         return 0
     now = time.time() if now is None else now

@@ -430,19 +430,25 @@ class SpamGuard(discord.Client):
         return in_chat_channel and not others
 
     def react_to(self, message: discord.Message, text: str, tone: str | None = None) -> int:
-        """Updates the bot's opinion of someone talking to it, and returns aura for being nice to it if the roll
-        hits (0 otherwise). `tone` is the chat AI's read ("nice", "rude" or "neutral"); without it the wording
+        """Updates the bot's opinion of someone talking to it, and returns the aura they gain for being nice to it or
+        lose for being rude, if the roll hits (0 otherwise). `tone` is the chat AI's read ("nice", "rude" or "neutral"); without it the wording
         decides."""
         if change := rep.react(self.store, message.author, text, tone=tone):
             log.info("Rep: %s %+d (%s, %r)", message.author, change, f"AI read it as {tone}" if tone else "from the wording", text[:80])
-        points = aura.nice_aura(self.store, message.author, text, tone=tone)
+        kind = rep.classify(text, tone)
+        if kind == "nice":
+            points = aura.nice_aura(self.store, message.author, text, tone=tone)
+        elif kind == "rude":
+            points = aura.rude_aura(self.store, message.author, text)
+        else:
+            points = 0
         if points:
-            log.info("Nice to the bot: %s +%d aura (%r)", message.author, points, text[:80])
+            log.info("%s to the bot: %s %+d aura (%r)", kind.title(), message.author, points, text[:80])
         return points
 
     async def thank(self, message: discord.Message, points: int) -> None:
-        """The short reply for nice-to-the-bot aura when the AI chat isn't answering this message."""
-        line = random.choice(aura.NICE_FALLBACK)
+        """The short reply for nice or rude aura when the AI chat isn't answering this message."""
+        line = random.choice(aura.NICE_FALLBACK if points > 0 else aura.RUDE_FALLBACK)
         try:
             await message.reply(f"{line} {aura.aura_text(points)}", mention_author=False, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
