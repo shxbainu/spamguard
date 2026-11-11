@@ -288,7 +288,7 @@ The same check decides nice-to-the-bot aura. Turn reputation off with `REP_ENABL
 
 Every day at `PREDICT_OPEN` (10:00) the bot posts one yes/no question in `PREDICT_CHANNEL_ID` (default: the casino channel, else the chat channel). Bet with `/predict yes 100` (once a day, up to `PREDICT_MAX_BET`, 500) until `PREDICT_CLOSE` (18:00); at `PREDICT_SETTLE` (23:30) it posts the answer and right bets pay 2x. Times use `GRASS_TIMEZONE`.
 
-- **About the server** (no AI at all, settled from the bot's own records): will the server send more than N messages today (N from yesterday), will the bot time anyone out, will anyone gain or lose 100+ aura from one message, will anyone lose 1,000+ in the casino.
+- **About the server** (no AI at all, settled from the bot's own records): will the server send more than N messages, will the bot time anyone out, will anyone gain or lose N+ aura from one message, will anyone lose N+ in the casino. Each N comes from the past 14 days (a typical day here), so a small server gets "lose 200+ in the casino", not 1,000+. A question that would have been "yes" on fewer than 20% or more than 80% of those days is skipped as a near sure thing, and if nothing fits (a new or quiet server), there's no question that day.
 - **Sports or news** (`PREDICT_WORLD_CHANCE`, half the days): only when the `/settleargument` model can search the web (Gemini). One search writes the question, one checks the result that night. Without real search results it falls back to a server question, and if the result can't be confirmed every bet goes back.
 
 ### The Daily Aura

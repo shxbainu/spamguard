@@ -60,38 +60,75 @@ def at(now: datetime, clock: str) -> datetime:
     return now.replace(hour=int(hour), minute=int(minute or 0), second=0, microsecond=0)
 
 
+HISTORY_DAYS = 14
+# Only ask what's a real toss-up here: a question that came out "yes" on fewer or more of the past days than this
+# is skipped.
+FAIR = (0.2, 0.8)
+AURA_STEPS = [25, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 2500, 5000, 10000]
+
+
 def round_count(count: int) -> int:
-    """A tidy over/under line near yesterday's message count."""
+    """A tidy over/under line near a typical day's message count."""
     step = 10 if count < 200 else 25 if count < 1000 else 100
     return max(step, round(count / step) * step)
 
 
-def chat_questions(yesterday_messages: int) -> list[dict]:
-    """The questions about this server that the bot can settle itself."""
-    questions = [
-        {"kind": "timeout", "question": "Will the bot time anyone out today?"},
-        {"kind": "moment", "question": "Will anyone gain or lose 100+ aura from a single message today?"},
-        {"kind": "casino", "question": "Will anyone lose 1,000+ aura in the casino today?"},
-    ]
-    if yesterday_messages >= 50:
-        line = round_count(yesterday_messages)
-        questions.append({"kind": "messages", "line": line, "question": f"Will this server send more than {line:,} messages today?"})
+def nice_aura(amount: float) -> int:
+    return min(AURA_STEPS, key=lambda step: abs(step - amount))
+
+
+def median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def chat_questions(history: dict[str, list[int]]) -> list[dict]:
+    """Questions about this server that the bot can settle itself, with lines set from what really happened on
+    recent days, so they're realistic for this server right now. `history` has one number per past day for:
+    "messages" (messages sent), "timeout" (timeouts), "moment" (the biggest aura gain or loss from one message) and
+    "casino" (the most anyone lost in the casino). Each question says how often it would have been "yes" ("rate"),
+    and only ones that were a toss-up are kept."""
+    questions = []
+
+    def add(kind: str, line: int, question: str, hit) -> None:
+        days = history.get(kind) or []
+        if len(days) < 3:
+            return  # not enough to go on yet
+        rate = sum(1 for value in days if hit(value)) / len(days)
+        if FAIR[0] <= rate <= FAIR[1]:
+            questions.append({"kind": kind, "line": line, "question": question, "rate": round(rate, 2)})
+
+    busy = [n for n in history.get("messages", []) if n >= 50]
+    if busy:
+        line = round_count(median(busy))
+        add("messages", line, f"Will this server send more than {line:,} messages today?", lambda n: n > line)
+    add("timeout", 1, "Will the bot time anyone out today?", lambda n: n >= 1)
+    moments = [n for n in history.get("moment", []) if n]
+    if moments:
+        line = nice_aura(median(moments))
+        add("moment", line, f"Will anyone gain or lose {line:,}+ aura from a single message today?", lambda n: n >= line)
+    losses = [n for n in history.get("casino", []) if n]
+    if losses:
+        line = nice_aura(median(losses))
+        add("casino", line, f"Will anyone lose {line:,}+ aura in the casino today?", lambda n: n >= line)
     return questions
 
 
 def settle_chat(store, guild_id: int, question: dict, span: tuple[float, float], messages_that_day: int) -> tuple[str, str]:
     """("yes" or "no", why) for a question about the server, from the bot's own records for that day."""
     kind = question["kind"]
+    line = question.get("line") or {"timeout": 1, "moment": 100, "casino": 1000}.get(kind, 0)
     if kind == "messages":
-        return ("yes" if messages_that_day > question["line"] else "no"), f"{messages_that_day:,} messages today"
+        return ("yes" if messages_that_day > line else "no"), f"{messages_that_day:,} messages today"
     if kind == "timeout":
         count = store.punishments_between(guild_id, *span)
-        return ("yes" if count else "no"), f"{count} timeout{'s' if count != 1 else ''} today"
+        return ("yes" if count >= line else "no"), f"{count} timeout{'s' if count != 1 else ''} today"
     if kind == "moment":
         biggest = store.biggest_moment_between(guild_id, *span)
-        return ("yes" if abs(biggest) >= 100 else "no"), (f"biggest was {biggest:+,}" if biggest else "no aura moments today")
+        return ("yes" if abs(biggest) >= line else "no"), (f"biggest was {biggest:+,}" if biggest else "no aura moments today")
     worst = store.worst_casino_day_between(guild_id, *span)
-    return ("yes" if worst <= -1000 else "no"), (f"worst casino day was {worst:+,}" if worst < 0 else "nobody lost aura in the casino")
+    return ("yes" if -worst >= line else "no"), (f"worst casino day was {worst:+,}" if worst < 0 else "nobody lost aura in the casino")
 
 
 def payouts(bets: dict[str, list], answer: str) -> dict[str, int]:
@@ -181,21 +218,51 @@ class Predictions:
         if self.load(guild_id, date) is None and at(now, PREDICT_OPEN) <= now < at(now, PREDICT_CLOSE):
             data = await self.make_question(guild_id, now)
             self.save(guild_id, date, data)
-            await channel.send(embed=self.question_card(channel.guild, data))
+            if data["status"] == "open":
+                await channel.send(embed=self.question_card(channel.guild, data))
+
+    def history(self, guild_id: int, now: datetime) -> dict[str, list[int]]:
+        """What happened on each of the past HISTORY_DAYS days (most recent first), for setting realistic lines.
+        Days before the bot started counting messages are left out of "messages"."""
+        days = {"messages": [], "timeout": [], "moment": [], "casino": []}
+        midnight = at(now, "00:00")
+        for back in range(1, HISTORY_DAYS + 1):
+            start = midnight - timedelta(days=back)
+            span = (start.timestamp(), (start + timedelta(days=1)).timestamp())
+            if count := self.messages_on(guild_id, start.date().isoformat()):
+                days["messages"].append(count)
+            days["timeout"].append(self.store.punishments_between(guild_id, *span))
+            days["moment"].append(abs(self.store.biggest_moment_between(guild_id, *span)))
+            days["casino"].append(-self.store.worst_casino_day_between(guild_id, *span))
+        return days
+
+    async def world_question(self, now: datetime) -> dict | None:
+        settler = self.bot.settler
+        if settler is None or not settler.can_search:
+            return None
+        prompt = WORLD_PROMPT.format(date=now.strftime("%A %B %d, %Y"), settle=PREDICT_SETTLE, zone=self.zone.key)
+        found, sources = await settler.research(prompt, "Write today's question.", WORLD_SCHEMA, 1024)
+        # Only with real search results: without them the model would be guessing what's on today.
+        if found and sources and found.get("question") and found.get("check"):
+            log.info("Daily prediction (world): %s", found["question"])
+            return {"kind": "world", "question": found["question"][:200], "check": found["check"][:150]}
+        return None
 
     async def make_question(self, guild_id: int, now: datetime) -> dict:
-        yesterday = (now - timedelta(days=1)).date().isoformat()
-        settler = self.bot.settler
-        if settler is not None and settler.can_search and random.random() < PREDICT_WORLD_CHANCE:
-            prompt = WORLD_PROMPT.format(date=now.strftime("%A %B %d, %Y"), settle=PREDICT_SETTLE, zone=self.zone.key)
-            found, sources = await settler.research(prompt, "Write today's question.", WORLD_SCHEMA, 1024)
-            # Only with real search results: without them the model would be guessing what's on today.
-            if found and sources and found.get("question") and found.get("check"):
-                log.info("Daily prediction (world): %s", found["question"])
-                return {"kind": "world", "question": found["question"][:200], "check": found["check"][:150],
-                        "status": "open", "bets": {}}
-        question = random.choice(chat_questions(self.messages_on(guild_id, yesterday)))
-        log.info("Daily prediction (chat): %s", question["question"])
+        """Today's question: sports/news some days, otherwise a realistic one about the server. If nothing fits
+        (a new or quiet server), there's no question today rather than one that's basically a sure thing."""
+        tried_world = False
+        question = None
+        if random.random() < PREDICT_WORLD_CHANCE:
+            tried_world, question = True, await self.world_question(now)
+        if question is None and (options := chat_questions(self.history(guild_id, now))):
+            question = random.choice(options)
+            log.info("Daily prediction (chat): %s (yes on %d%% of recent days)", question["question"], question["rate"] * 100)
+        if question is None and not tried_world:
+            question = await self.world_question(now)
+        if question is None:
+            log.info("Daily prediction: nothing realistic to ask today, so no question")
+            return {"status": "skipped", "bets": {}}
         return {**question, "status": "open", "bets": {}}
 
     def question_card(self, guild: discord.Guild, data: dict) -> discord.Embed:
@@ -254,6 +321,8 @@ class Predictions:
         data = self.load(member.guild.id, date)
         if data is None:
             return f"Today's question goes up at {PREDICT_OPEN}."
+        if data["status"] == "skipped":
+            return "There's no question today."
         if data["status"] != "open" or now >= at(now, PREDICT_CLOSE):
             return f"Bets closed at {PREDICT_CLOSE}. The answer comes at {PREDICT_SETTLE}."
         if str(member.id) in data["bets"]:
@@ -279,8 +348,9 @@ async def predict_cmd(interaction: discord.Interaction, side: Literal["yes", "no
     member = interaction.user
     if side is None:
         data = predictions.load(member.guild.id, predictions.today().date().isoformat())
-        if data is None:
-            await interaction.response.send_message(f"Today's question goes up at {PREDICT_OPEN}.", ephemeral=True)
+        if data is None or data["status"] == "skipped":
+            await interaction.response.send_message(
+                "There's no question today." if data else f"Today's question goes up at {PREDICT_OPEN}.", ephemeral=True)
         else:
             await interaction.response.send_message(embed=predictions.question_card(member.guild, data), ephemeral=True)
         return

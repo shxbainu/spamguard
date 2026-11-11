@@ -67,10 +67,44 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(predict.settle_chat(store, 1, {"kind": "casino"}, SPAN, 0)[0], "yes")
         self.assertEqual(predict.settle_chat(store, 1, {"kind": "messages", "line": 300}, SPAN, 301)[0], "yes")
 
-    def test_message_line_needs_a_busy_yesterday(self):
-        self.assertNotIn("messages", [q["kind"] for q in predict.chat_questions(10)])
-        line = next(q for q in predict.chat_questions(437) if q["kind"] == "messages")["line"]
-        self.assertEqual(line, 425)
+    def test_lines_come_from_recent_days(self):
+        # A small server: casino losses around 150-300 a day, nobody near 1,000.
+        history = {"messages": [437, 380, 512, 300], "timeout": [0] * 14,
+                   "moment": [50, 0, 100, 25, 50, 0, 50, 100, 0, 25, 50, 0, 0, 50],
+                   "casino": [200, 0, 300, 150, 0, 250, 0, 200, 0, 0, 150, 300, 0, 200]}
+        found = {q["kind"]: q for q in predict.chat_questions(history)}
+        self.assertEqual(found["messages"]["line"], 400)
+        self.assertEqual(found["casino"]["line"], 200, "realistic for how much people actually lose here")
+        self.assertIn("200+ aura in the casino", found["casino"]["question"])
+        self.assertEqual(found["moment"]["line"], 50)
+        self.assertNotIn("timeout", found, "never happens here, so it's not a real question")
+        for question in found.values():
+            self.assertTrue(0.2 <= question["rate"] <= 0.8, question)
+
+    def test_no_history_means_no_server_questions(self):
+        self.assertEqual(predict.chat_questions({"messages": [], "timeout": [0, 0], "moment": [], "casino": []}), [])
+        self.assertEqual(predict.chat_questions({"timeout": [1] * 14}), [], "happens every day, so it's a sure thing")
+
+    def test_history_reads_the_past_days(self):
+        store = temp_store()
+        p, _ = predictor(store)
+        store.add_aura(1, 6, "kai", -300, "slots", "bet", now=START - 86400 + 60)  # yesterday
+        store.add_aura(1, 6, "kai", -999, "slots", "bet", now=START + 60)  # today: not history
+        p.messages[(1, "2026-11-09")] = 120
+        days = p.history(1, DAY)
+        self.assertEqual(days["casino"][0], 300)
+        self.assertEqual(days["messages"], [120])
+        self.assertEqual(len(days["timeout"]), predict.HISTORY_DAYS)
+
+    def test_quiet_server_skips_the_day(self):
+        store = temp_store()
+        p, channel = predictor(store)
+        asyncio.run(p.tick())
+        self.assertEqual(p.load(1, "2026-11-10")["status"], "skipped")
+        self.assertEqual(channel.sent, [], "nothing posted")
+        asyncio.run(p.tick())
+        self.assertEqual(channel.sent, [], "and it doesn't retry every minute")
+        self.assertIn("no question today", p.place(person(5, "ben"), "yes", "10"))
 
     def test_payouts(self):
         bets = {"5": ["yes", 100, "ben"], "6": ["no", 50, "kai"]}
@@ -84,6 +118,8 @@ class PredictionTests(unittest.TestCase):
         for who in (ben, kai, luke):
             who.guild = channel.guild
         self.assertIn("goes up at", p.place(ben, "yes", "100"))
+        for back in range(1, 8):  # a week where somebody got a 100-aura moment every other day
+            store.add_aura(1, 8, "luke", 100 if back % 2 else 25, "comeback", "x", now=START - back * 86400 + 60)
         asyncio.run(p.tick())
         data = p.load(1, "2026-11-10")
         self.assertEqual(data["status"], "open")
@@ -122,7 +158,7 @@ class PredictionTests(unittest.TestCase):
         predict.PREDICT_WORLD_CHANCE, old = 1.0, predict.PREDICT_WORLD_CHANCE
         try:
             data = asyncio.run(p.make_question(1, DAY))
-            self.assertNotEqual(data["kind"], "world", "no search results, so a chat question instead")
+            self.assertNotEqual(data.get("kind"), "world", "no search results, so no made-up world question")
             p.bot.settler = Writer({"question": "Will the Knicks beat the Celtics tonight?", "check": "knicks celtics"})
             data = asyncio.run(p.make_question(1, DAY))
             self.assertEqual(data["kind"], "world")
@@ -139,7 +175,7 @@ class PredictionTests(unittest.TestCase):
         p, _ = predictor(temp_store(), Writer({}, searches=False))
         predict.PREDICT_WORLD_CHANCE, old = 1.0, predict.PREDICT_WORLD_CHANCE
         try:
-            self.assertNotEqual(asyncio.run(p.make_question(1, DAY))["kind"], "world")
+            self.assertNotEqual(asyncio.run(p.make_question(1, DAY)).get("kind"), "world")
             self.assertEqual(p.bot.settler.calls, 0)
         finally:
             predict.PREDICT_WORLD_CHANCE = old
