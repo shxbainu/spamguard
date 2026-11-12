@@ -1,8 +1,8 @@
 """Free aura without betting, and without any AI:
 
-/work: a shift of three random mini-tasks (type a phrase like "i love shxbainu and this server", unscramble a word,
-quick maths, count emojis, type a word backwards, remember a code that disappears), paid per task plus a bonus for the
-whole shift. A few shifts a day.
+/work: a shift of four random mini-tasks (type a phrase like "i love shxbainu and this server", unscramble a word,
+quick maths, count emojis, type a word backwards, remember a code that disappears), paid only if every task is right.
+A few shifts a day.
 
 /beg: a random stranger gives you a little aura (or walks past), every 30 minutes.
 
@@ -33,20 +33,21 @@ load_dotenv()
 
 log = logging.getLogger("spamguard.work")
 
-WORK_SHIFTS_PER_DAY = int(os.getenv("WORK_SHIFTS_PER_DAY") or 5)
-WORK_COOLDOWN_MINUTES = int(os.getenv("WORK_COOLDOWN_MINUTES") or 10)
-WORK_PAY = (10, 20)          # per phrase typed right
-WORK_BONUS = 15              # for a whole shift
-WORK_PHRASES = 3
-WORK_SECONDS = 30            # to type each phrase
+WORK_SHIFTS_PER_DAY = int(os.getenv("WORK_SHIFTS_PER_DAY") or 3)
+WORK_COOLDOWN_MINUTES = int(os.getenv("WORK_COOLDOWN_MINUTES") or 20)
+WORK_PAY = (8, 15)           # per task, paid only if the whole shift is done
+WORK_BONUS = 10              # for a whole shift
+WORK_PHRASES = 4             # tasks in a shift
+WORK_SECONDS = 20            # for each task
+TYPE_SECONDS = 35            # for the long typing ones
 CAUGHT_COOLDOWN_MINUTES = 60  # after being caught copy-pasting
 
 DROPS_ENABLED = (os.getenv("DROPS_ENABLED") or "true").strip().lower() in ("1", "true", "yes", "on")
 DROP_CHANNEL_ID = int(os.getenv("DROP_CHANNEL_ID") or os.getenv("CHAT_CHANNEL_ID") or 0)
 DROP_CHANCE = float(os.getenv("DROP_CHANCE") or 0.03)  # per message in the drop channel
 DROP_GAP_MINUTES = int(os.getenv("DROP_GAP_MINUTES") or 20)
-DROP_PAY = (30, 60)
-DROP_SECONDS = 45
+DROP_PAY = (15, 30)
+DROP_SECONDS = 30
 
 PHRASES = [
     "i love shxbainu and this server",
@@ -111,7 +112,12 @@ def scramble(word: str, rng: random.Random = random) -> str:
             return " ".join(letters).upper()
 
 
-EMOJIS = ["🍑", "🍒", "🍋", "💎", "🔥", "🐸", "🧃", "🦆"]
+EMOJIS = ["🍎", "🍅", "🍒", "🍓", "🔴"]  # lookalikes, so counting takes a careful look
+LONG_WORDS = [
+    "chocolate", "spaghetti", "pineapple", "astronaut", "trampoline", "dinosaur", "hurricane", "submarine",
+    "volleyball", "skateboard", "microwave", "telescope", "butterfly", "lighthouse", "parachute", "basketball",
+    "strawberry", "headphones", "cheeseburger", "grandmother", "playground", "watermelon", "snowboard", "detective",
+]
 TASK_KINDS = ["type", "unscramble", "math", "count", "backwards", "memory"]
 TASK_NAMES = {"type": "Type it", "unscramble": "Unscramble", "math": "Quick maths", "count": "Count",
               "backwards": "Backwards", "memory": "Memory"}
@@ -122,22 +128,23 @@ def make_task(kind: str | None = None, rng: random.Random = random) -> dict:
     Typing tasks are checked for copy-paste."""
     kind = kind or rng.choice(TASK_KINDS)
     if kind == "type":
-        phrase = rng.choice(PHRASES)
-        return {"kind": kind, "prompt": f"Type this:\n**{disguise(phrase, rng)}**", "answer": phrase}
+        first, second = rng.sample(PHRASES, 2)
+        phrase = f"{first} and {second}"
+        return {"kind": kind, "prompt": f"Type this:\n**{disguise(phrase, rng)}**", "answer": phrase, "seconds": TYPE_SECONDS}
     if kind == "unscramble":
-        word = rng.choice(WORDS)
+        word = rng.choice(LONG_WORDS)
         return {"kind": kind, "prompt": f"Unscramble: **{scramble(word, rng)}**", "answer": word}
     if kind == "math":
-        a, b, c = rng.randint(3, 12), rng.randint(3, 12), rng.randint(5, 40)
-        return {"kind": kind, "prompt": f"Quick maths: **{a} × {b} + {c}**", "answer": str(a * b + c)}
+        a, b, c, d = rng.randint(12, 25), rng.randint(3, 9), rng.randint(10, 99), rng.randint(5, 50)
+        return {"kind": kind, "prompt": f"Quick maths: **{a} × {b} + {c} − {d}**", "answer": str(a * b + c - d)}
     if kind == "count":
         target = rng.choice(EMOJIS)
-        row = [rng.choice(EMOJIS) for _ in range(rng.randint(10, 16))]
+        row = [rng.choice(EMOJIS) for _ in range(rng.randint(20, 30))]
         return {"kind": kind, "prompt": f"How many {target} are here?\n{''.join(row)}", "answer": str(row.count(target))}
     if kind == "backwards":
-        word = rng.choice(WORDS)
+        word = rng.choice(LONG_WORDS)
         return {"kind": kind, "prompt": f"Type this backwards: **{disguise(word, rng)}**", "answer": word[::-1]}
-    code = "".join(rng.choice("0123456789") for _ in range(rng.randint(5, 6)))
+    code = "".join(rng.choice("0123456789") for _ in range(8))
     return {"kind": "memory", "prompt": f"Remember this code: **{' '.join(code)}**", "hidden": "Now type the code from memory.",
             "answer": code}
 
@@ -162,16 +169,16 @@ BEGGARS = [
     ("Kim John-Un", "the supreme leader is generous today"), ("the bot itself", "don't tell anyone"),
     ("a random npc", "..."), ("a kid with a lemonade stand", "that's all my profits"),
 ]
-BEG_COOLDOWN_MINUTES = int(os.getenv("BEG_COOLDOWN_MINUTES") or 30)
+BEG_COOLDOWN_MINUTES = int(os.getenv("BEG_COOLDOWN_MINUTES") or 60)
 
 
 def beg(rng: random.Random = random) -> tuple[int, str]:
     """(aura, what happened): usually a little, sometimes nothing, now and then a lot."""
     who, line = rng.choice(BEGGARS)
     roll = rng.random()
-    if roll < 0.2:
+    if roll < 0.35:
         return 0, f"**{who}** walked right past you."
-    amount = rng.randint(25, 40) if roll > 0.9 else rng.randint(5, 20)
+    amount = rng.randint(15, 25) if roll > 0.92 else rng.randint(2, 10)
     return amount, f"**{who}** gave you {fmt(amount)}. \"{line}\""
 
 
@@ -226,16 +233,17 @@ class Work:
         earned, done, caught = 0, 0, False
         try:
             for i, task in enumerate(tasks, 1):
-                text = (f"🧹 **Shift started:** {WORK_PHRASES} quick tasks. Type each answer in this channel within "
-                        f"{WORK_SECONDS}s (only you see these, and your answers get cleaned up). Copy-paste gets caught.\n\n"
-                        if i == 1 else "") + f"**{i}/{WORK_PHRASES} · {TASK_NAMES[task['kind']]}:** {task['prompt']}"
+                text = (f"🧹 **Shift started:** {WORK_PHRASES} tasks, and you only get paid if you get them **all** right. "
+                        f"Type each answer in this channel (only you see these, and your answers get cleaned up). "
+                        f"Copy-paste gets caught.\n\n"
+                        if i == 1 else "") + f"**{i}/{WORK_PHRASES} · {TASK_NAMES[task['kind']]}** ({task.get('seconds', WORK_SECONDS)}s): {task['prompt']}"
                 if i == 1:
                     await interaction.response.send_message(text, ephemeral=True)
                     shown_message = await interaction.original_response()
                 else:
                     shown_message = await interaction.followup.send(text, ephemeral=True, wait=True)
                 if task.get("hidden"):
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                     try:
                         await shown_message.edit(content=text.replace(task["prompt"], task["hidden"]))
                     except discord.HTTPException:
@@ -243,7 +251,7 @@ class Work:
                 shown = time.monotonic()
                 try:
                     typed = await self.bot.wait_for(
-                        "message", timeout=WORK_SECONDS,
+                        "message", timeout=task.get("seconds", WORK_SECONDS),
                         check=lambda m: m.channel.id == channel.id and m.author.id == member.id,
                     )
                 except asyncio.TimeoutError:
@@ -267,14 +275,16 @@ class Work:
                 done += 1
         finally:
             self.workers.discard(key)
+        self.end_shift(member, time.time(), CAUGHT_COOLDOWN_MINUTES if caught else WORK_COOLDOWN_MINUTES)
         if done == WORK_PHRASES:
             earned += WORK_BONUS
-        self.end_shift(member, time.time(), CAUGHT_COOLDOWN_MINUTES if caught else WORK_COOLDOWN_MINUTES)
-        if earned:
-            self.store.add_aura(member.guild.id, member.id, member.display_name, earned, "work", f"did {done}/{WORK_PHRASES} tasks")
-            bonus = f" (+{WORK_BONUS} for the full shift)" if done == WORK_PHRASES else ""
+            self.store.add_aura(member.guild.id, member.id, member.display_name, earned, "work", f"did all {WORK_PHRASES} tasks")
             await interaction.followup.send(
-                f"✅ Shift done: **+{fmt(earned)}**{bonus}. Balance {fmt(balance(self.store, member.guild.id, member.id))}.", ephemeral=True)
+                f"✅ Shift done: **+{fmt(earned)}**. Balance {fmt(balance(self.store, member.guild.id, member.id))}.", ephemeral=True)
+        else:
+            earned = 0
+            if not caught:
+                await interaction.followup.send(f"No pay: you finished {done} of {WORK_PHRASES}. It's all or nothing.", ephemeral=True)
         log.info("Work: %s typed %d/%d%s, +%d", member, done, WORK_PHRASES, " (caught pasting)" if caught else "", earned)
 
     # ---- aura drops ----

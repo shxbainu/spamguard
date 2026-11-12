@@ -26,7 +26,7 @@ class TaskTests(unittest.TestCase):
             for kind in work.TASK_KINDS:
                 task = work.make_task(kind, random.Random(seed))
                 self.assertEqual(task["kind"], kind)
-                seconds = 30 if kind == "type" else 2
+                seconds = 60 if kind == "type" else 2
                 self.assertEqual(work.check_answer(task, task["answer"], seconds), "ok", task)
                 self.assertEqual(work.check_answer(task, task["answer"] + "x", seconds), "wrong", task)
 
@@ -47,9 +47,11 @@ class TaskTests(unittest.TestCase):
     def test_beg(self):
         results = [work.beg(random.Random(i)) for i in range(400)]
         nothing = sum(1 for amount, _ in results if amount == 0)
-        self.assertTrue(40 < nothing < 130, nothing)
-        self.assertTrue(all(0 <= amount <= 40 for amount, _ in results))
-        self.assertTrue(any(amount > 20 for amount, _ in results), "now and then a lot")
+        self.assertTrue(100 < nothing < 180, nothing)
+        self.assertTrue(all(0 <= amount <= 25 for amount, _ in results))
+        self.assertTrue(any(amount >= 15 for amount, _ in results), "now and then more")
+        usual = [amount for amount, _ in results if 0 < amount < 15]
+        self.assertLessEqual(max(usual), 10)
 
 
 class FakeInteraction:
@@ -141,10 +143,11 @@ class ShiftTests(unittest.TestCase):
 
     def test_full_shift_pays_and_cleans_up(self):
         right = lambda task: task["answer"]
-        worker, interaction, deleted = self.run_shift([right, right, right])
+        worker, interaction, deleted = self.run_shift([right] * work.WORK_PHRASES)
         total = self.store.aura_total(1, 5) - 500  # the casino's starting aura
-        self.assertTrue(3 * work.WORK_PAY[0] + work.WORK_BONUS <= total <= 3 * work.WORK_PAY[1] + work.WORK_BONUS, total)
-        self.assertEqual(len(deleted), 3, "answers are deleted to keep the channel clean")
+        n = work.WORK_PHRASES
+        self.assertTrue(n * work.WORK_PAY[0] + work.WORK_BONUS <= total <= n * work.WORK_PAY[1] + work.WORK_BONUS, total)
+        self.assertEqual(len(deleted), n, "answers are deleted to keep the channel clean")
         self.assertIn("Shift done", interaction.texts()[-1])
         self.assertEqual(worker.workers, set())
         self.assertIn("work again", worker.shift_problem(self.ben, __import__("time").time()), "cooldown")
@@ -156,12 +159,17 @@ class ShiftTests(unittest.TestCase):
         self.assertEqual(self.store.aura_total(1, 5), 500, "no pay, even for the first one")
         self.assertTrue(any("Caught copy-pasting" in t for t in interaction.texts() if t))
 
-    def test_wrong_answer_ends_the_shift_but_keeps_what_you_earned(self):
+    def test_one_mistake_means_no_pay(self):
         right = lambda task: task["answer"]
-        worker, interaction, _ = self.run_shift([right, "nope"])
-        earned = self.store.aura_total(1, 5) - 500
-        self.assertTrue(work.WORK_PAY[0] <= earned <= work.WORK_PAY[1])
+        worker, interaction, _ = self.run_shift([right, right, "nope"])
+        self.assertEqual(self.store.aura_total(1, 5), 500, "all or nothing")
         self.assertTrue(any("That's not it" in t for t in interaction.texts() if t))
+        self.assertTrue(any("all or nothing" in t for t in interaction.texts() if t))
+
+    def test_running_out_of_time_means_no_pay(self):
+        right = lambda task: task["answer"]
+        self.run_shift([right, right, right])  # the 4th never comes
+        self.assertEqual(self.store.aura_total(1, 5), 500)
 
     def test_daily_limit(self):
         worker = work.Work(SimpleNamespace(store=self.store))

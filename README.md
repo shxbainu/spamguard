@@ -251,8 +251,8 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.92 ÷ the chance it was right (a 50/50 is 1.84x, two in a row about 3.4x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
 | `/duel @user bet game` | Both bet the same and play for the pot (default: a random one of the first three below) |
 | `/daily` | Free aura once a day (more for days in a row) |
-| `/work` | A shift of 3 quick tasks for free aura (see below) |
-| `/beg` | A random stranger gives you 0–40 aura, every 30 minutes |
+| `/work` | A shift of 4 hard tasks for free aura, all or nothing (see below) |
+| `/beg` | A random stranger gives you 0–25 aura, once an hour |
 
 Duel games:
 
@@ -267,9 +267,9 @@ If nobody wins (time runs out), both bets go back.
 
 Free aura without betting (no AI involved):
 
-- **`/work`**: a shift of 3 random tasks, each typed in the channel within 30 seconds: type a phrase ("i love shxbainu and this server"), unscramble a word, quick maths, count the emojis, type a word backwards, or remember a code that disappears after 3 seconds. 10–20 aura per task plus 15 for finishing; a wrong answer or running out of time ends the shift (you keep what you made). Your answers are deleted to keep the channel clean. 10 minutes between shifts, 5 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`).
-- **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts one of those tasks; the first right answer in 45 seconds wins 30–60.
-- **`/beg`**: usually 5–20, sometimes nothing, now and then 25–40.
+- **`/work`**: a shift of 4 random tasks, all or nothing: one wrong answer, timeout or paste and the shift pays nothing. Tasks: type two phrases joined together ("i love shxbainu and this server and …", 35 s), unscramble a long word, maths like 17 × 8 + 63 − 29, count one of 5 lookalike red emojis in a row of 20–30, type a long word backwards, or remember an 8-digit code shown for 2 seconds (20 s each). A full shift pays about 40–70. 20 minutes between shifts, 3 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`). Your answers are deleted to keep the channel clean.
+- **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts one of those tasks; the first right answer in 30 seconds wins 15–30.
+- **`/beg`**: once an hour; usually 2–10, a third of the time nothing, now and then 15–25.
 - **No copy-paste**: phrases and words are shown with invisible characters mixed in, so pasted text gives itself away, and typing faster than about 170 words a minute counts as pasting. Caught pasting in `/work` means no pay for that shift and no work for an hour; in a drop, a pasted answer just doesn't count. Shift answers and drop guesses skip moderation, so typing the same phrase isn't treated as spam.
 
 Shop (`/shop` to see it, `/buy` to spend):
