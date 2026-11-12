@@ -251,7 +251,7 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.92 ÷ the chance it was right (a 50/50 is 1.84x, two in a row about 3.4x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
 | `/duel @user bet game` | Both bet the same and play for the pot (default: a random one of the first three below) |
 | `/daily` | Free aura once a day (more for days in a row) |
-| `/work` | A shift of 4 hard tasks for free aura, all or nothing (see below) |
+| `/work` | A shift of 4 button-and-menu tasks for free aura, all or nothing (see below) |
 | `/beg` | A random stranger gives you 0–25 aura, once an hour |
 
 Duel games:
@@ -267,8 +267,18 @@ If nobody wins (time runs out), both bets go back.
 
 Free aura without betting (no AI involved):
 
-- **`/work`**: a shift of 4 random tasks, all or nothing: one wrong answer, timeout or paste and the shift pays nothing. Each shift is 4 of these 12 (20 s each, 35 s for typing): type two phrases joined together ("i love shxbainu and this server and …"), unscramble a long word, maths like 17 × 8 + 63 − 29, count one of 5 lookalike red emojis in a row of 20–30, type a long word backwards, remember an 8-digit code (shown 2 s), remember 5 words in order (shown 3 s), find the missing number (16, 27, 38, 49, __, 71), spot the odd emoji (🌑🌑🌚🌑 → 3), fill in the vowels (P_R_CH_T_), type only the capitals (PARachuTe → PART), or count a letter in a sentence. A full shift pays about 40–70. 20 minutes between shifts, 3 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`). Your answers are deleted to keep the channel clean.
-- **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts one of those tasks; the first right answer in 30 seconds wins 15–30.
+- **`/work`**: a shift of 4 random tasks, all or nothing: fail one (or run out of time) and the shift pays nothing. Only you see them, and they're played with buttons and menus:
+  - 🔍 **Find it**: a 4×5 grid of one emoji with a single lookalike (🌑/🌚, 🍎/🍅…); tap it.
+  - 🔨 **Whack-a-mole**: a 🐹 pops up 6 times in a 3×3 grid; hit 4, and don't hit empty holes more than twice.
+  - 🎨 **Simon says**: watch 5 colours for 3 seconds, then tap them back in order.
+  - 🚦 **Green light**: tap the moment the button turns green, within 1 second (timed with Discord's clock); early fails.
+  - 🃏 **Memory pairs**: flip cards to find all 6 pairs, at most 6 misses.
+  - ✅ **Pick them all**: select exactly the animals (or foods, sports, colours) from a menu of 8.
+  - 👆 **Tap count**: press +1 exactly N times with the counter hidden, then Done.
+  - ⌨️ **Type it**: type two phrases joined ("i love shxbainu and this server and …") in the channel within 35 s; copy-paste is caught and your message is deleted after.
+
+  A full shift pays about 40–70. 20 minutes between shifts, 3 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`).
+- **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts a word or number puzzle (unscramble, quick maths, count emojis, backwards, missing number, odd one out, fill the blanks, capitals, letter count, or a typing race); the first right answer in 30 seconds wins 15–30.
 - **`/beg`**: once an hour; usually 2–10, a third of the time nothing, now and then 15–25.
 - **No copy-paste**: phrases and words are shown with invisible characters mixed in, so pasted text gives itself away, and typing faster than about 170 words a minute counts as pasting. Caught pasting in `/work` means no pay for that shift and no work for an hour; in a drop, a pasted answer just doesn't count. Shift answers and drop guesses skip moderation, so typing the same phrase isn't treated as spam.
 
@@ -412,7 +422,7 @@ python -m unittest -v
 - `storage.py`: SQLite history, offense counts and /shutup uses
 - `aura.py`, `casino.py`, `duels.py`, `shop.py`: aura, the casino, duels and the shop
 - `rep.py`: reputation with the bot
-- `work.py`: /work, aura drops and /beg
+- `work.py`, `work_tasks.py`: /work and its tasks, aura drops and /beg
 - `predict.py`: the daily prediction
 - `news.py`: the Daily Aura
 - `dashboard.py`, `dashboard.html`: the web dashboard

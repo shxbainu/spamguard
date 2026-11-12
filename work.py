@@ -1,14 +1,14 @@
 """Free aura without betting, and without any AI:
 
-/work: a shift of four random mini-tasks out of twelve (type a phrase like "i love shxbainu and this server", unscramble a
-word, quick maths, count emojis, type a word backwards, remember a code or words in order before they disappear, find
-the missing number, spot the odd emoji, fill in the blanks, type only the capitals, count a letter), paid only if every task is right.
-A few shifts a day.
+/work: a shift of four random tasks, mostly played with buttons and menus (find the odd emoji, whack-a-mole, Simon says,
+green light, memory pairs, pick all of a kind from a menu, tap a button an exact number of times) plus typing a phrase
+like "i love shxbainu and this server". Paid only if every task is passed. A few shifts a day.
 
 /beg: a random stranger gives you a little aura (or walks past), every 30 minutes.
 
-Aura drops: now and then, when the chat is active, the bot posts one of those tasks in the drop channel and the first
-person to get it right wins.
+Aura drops: now and then, when the chat is active, the bot posts a word or number puzzle (unscramble, quick maths,
+count emojis, backwards, missing number, odd one out, fill the blanks, capitals, letter count, a typing race) in the drop
+channel and the first person to get it right wins.
 
 Copy-paste doesn't work: phrases are shown with invisible characters mixed in, so pasted text gives itself away, and
 typing faster than a person can counts as pasting too. Messages that are part of a shift or a drop skip moderation
@@ -28,6 +28,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from cards import PLAYING, WIN, card
+import work_tasks
 from casino import balance, fmt, welcome
 
 load_dotenv()
@@ -124,7 +125,10 @@ TASK_KINDS = ["type", "unscramble", "math", "count", "backwards", "memory",
 TASK_NAMES = {"type": "Type it", "unscramble": "Unscramble", "math": "Quick maths", "count": "Count",
               "backwards": "Backwards", "memory": "Memory", "sequence": "Remember the order", "missing": "Missing number",
               "oddone": "Odd one out", "blanks": "Fill the blanks", "capitals": "Capitals only", "letters": "Letter count"}
-PRIVATE_KINDS = {"memory", "sequence"}  # they hide the prompt after a moment, so they can't be drops
+PRIVATE_KINDS = {"memory", "sequence"}
+# What a /work shift picks from: the interactive tasks (buttons and menus) and typing a phrase. The word and number
+# puzzles above are for aura drops.
+WORK_POOL = [*work_tasks.TASKS, "type"]  # they hide the prompt after a moment, so they can't be drops
 LOOKALIKES = [("🍎", "🍅"), ("😀", "😃"), ("🐶", "🐕"), ("🌑", "🌚"), ("🟥", "🟧"), ("💙", "💜"), ("🍊", "🍑")]
 
 
@@ -271,50 +275,40 @@ class Work:
             await interaction.response.send_message(problem, ephemeral=True)
             return
         welcome(self.store, member)
-        tasks = [make_task(kind) for kind in random.sample(TASK_KINDS, WORK_PHRASES)]
+        picks = random.sample(WORK_POOL, WORK_PHRASES)
         key = (channel.id, member.id)
         self.workers.add(key)
         earned, done, caught = 0, 0, False
         try:
-            for i, task in enumerate(tasks, 1):
-                text = (f"🧹 **Shift started:** {WORK_PHRASES} tasks, and you only get paid if you get them **all** right. "
-                        f"Type each answer in this channel (only you see these, and your answers get cleaned up). "
-                        f"Copy-paste gets caught.\n\n"
-                        if i == 1 else "") + f"**{i}/{WORK_PHRASES} · {TASK_NAMES[task['kind']]}** ({task.get('seconds', WORK_SECONDS)}s): {task['prompt']}"
-                if i == 1:
-                    await interaction.response.send_message(text, ephemeral=True)
-                    shown_message = await interaction.original_response()
+            await interaction.response.send_message(
+                f"🧹 **Shift started:** {WORK_PHRASES} tasks, and you only get paid if you pass them **all**. "
+                f"Only you can see these.", ephemeral=True)
+            for i, pick in enumerate(picks, 1):
+                header = f"**{i}/{WORK_PHRASES}**"
+                if pick == "type":
+                    verdict = await self.typing_task(interaction, channel, member, header)
+                    if verdict == "copied":
+                        caught = True
+                        await interaction.followup.send(
+                            f"🚨 Caught copy-pasting. No pay for this shift, and no work for {CAUGHT_COOLDOWN_MINUTES} minutes.", ephemeral=True)
+                        break
+                    if verdict != "ok":
+                        await interaction.followup.send(f"{verdict} Shift over.", ephemeral=True)
+                        break
                 else:
-                    shown_message = await interaction.followup.send(text, ephemeral=True, wait=True)
-                if task.get("hidden"):
-                    await asyncio.sleep(task.get("show", 2))
+                    task = work_tasks.TASKS[pick](member)
+                    task.message = await interaction.followup.send(
+                        f"{header} · **{task.name}** ({task.seconds}s)\n{task.prompt()}", view=task, ephemeral=True, wait=True)
+                    runner = asyncio.get_running_loop().create_task(task.begin())
                     try:
-                        await shown_message.edit(content=text.replace(task["prompt"], task["hidden"]))
-                    except discord.HTTPException:
-                        pass
-                shown = time.monotonic()
-                try:
-                    typed = await self.bot.wait_for(
-                        "message", timeout=task.get("seconds", WORK_SECONDS),
-                        check=lambda m: m.channel.id == channel.id and m.author.id == member.id,
-                    )
-                except asyncio.TimeoutError:
-                    await interaction.followup.send("⏰ Too slow. Shift over.", ephemeral=True)
-                    break
-                verdict = check_answer(task, typed.content, time.monotonic() - shown)
-                try:
-                    await typed.delete()  # keep the channel clean
-                except discord.HTTPException:
-                    pass
-                if verdict == "copied":
-                    caught = True
-                    await interaction.followup.send(
-                        f"🚨 Caught copy-pasting. No pay for this shift, and no work for {CAUGHT_COOLDOWN_MINUTES} minutes.", ephemeral=True)
-                    earned = 0
-                    break
-                if verdict == "wrong":
-                    await interaction.followup.send(f"❌ That's not it (it was **{task['answer']}**). Shift over.", ephemeral=True)
-                    break
+                        passed, note = await asyncio.wait_for(asyncio.shield(task.result), task.seconds + 10)
+                    except asyncio.TimeoutError:
+                        passed, note = False, "Too slow."
+                    finally:
+                        runner.cancel()
+                    if not passed:
+                        await interaction.followup.send(f"❌ {note or 'Failed.'} Shift over.", ephemeral=True)
+                        break
                 earned += random.randint(*WORK_PAY)
                 done += 1
         finally:
@@ -330,6 +324,25 @@ class Work:
             if not caught:
                 await interaction.followup.send(f"No pay: you finished {done} of {WORK_PHRASES}. It's all or nothing.", ephemeral=True)
         log.info("Work: %s typed %d/%d%s, +%d", member, done, WORK_PHRASES, " (caught pasting)" if caught else "", earned)
+
+    async def typing_task(self, interaction, channel, member, header: str) -> str:
+        """The one typing task: "ok", "copied", or what went wrong."""
+        task = make_task("type")
+        shown = await interaction.followup.send(
+            f"{header} · **⌨️ Type it** ({task['seconds']}s) in this channel, exactly. Copy-paste gets caught.\n{task['prompt']}",
+            ephemeral=True, wait=True)
+        started = time.monotonic()
+        try:
+            typed = await self.bot.wait_for(
+                "message", timeout=task["seconds"], check=lambda m: m.channel.id == channel.id and m.author.id == member.id)
+        except asyncio.TimeoutError:
+            return "⏰ Too slow."
+        verdict = check_answer(task, typed.content, time.monotonic() - started)
+        try:
+            await typed.delete()  # keep the channel clean
+        except discord.HTTPException:
+            pass
+        return verdict if verdict in ("ok", "copied") else "❌ That's not what it said."
 
     # ---- aura drops ----
 
