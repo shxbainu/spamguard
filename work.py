@@ -37,8 +37,8 @@ log = logging.getLogger("spamguard.work")
 
 WORK_SHIFTS_PER_DAY = int(os.getenv("WORK_SHIFTS_PER_DAY") or 3)
 WORK_COOLDOWN_MINUTES = int(os.getenv("WORK_COOLDOWN_MINUTES") or 20)
-WORK_PAY = (8, 15)           # per task, paid only if the whole shift is done
-WORK_BONUS = 10              # for a whole shift
+WORK_PAY = (25, 35)          # per task, paid only if the whole shift is done (a shift is at least 120)
+WORK_BONUS = 20              # for a whole shift
 WORK_PHRASES = 4             # tasks in a shift
 WORK_SECONDS = 20            # for each task
 TYPE_SECONDS = 35            # for the long typing ones

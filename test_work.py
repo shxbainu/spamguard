@@ -393,3 +393,8 @@ class DropTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PayTests(unittest.TestCase):
+    def test_a_shift_is_worth_at_least_100(self):
+        self.assertGreaterEqual(work.WORK_PHRASES * work.WORK_PAY[0] + work.WORK_BONUS, 100)
