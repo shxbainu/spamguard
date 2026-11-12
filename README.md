@@ -248,9 +248,11 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | `/slots bet` | Pair 1.5x, three of a kind 10x, three 🍑 25x |
 | `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
 | `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
-| `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.85 ÷ the chance it was right (a 50/50 is 1.7x, two in a row about 2.9x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
+| `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.92 ÷ the chance it was right (a 50/50 is 1.84x, two in a row about 3.4x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
 | `/duel @user bet game` | Both bet the same and play for the pot (default: a random one of the first three below) |
 | `/daily` | Free aura once a day (more for days in a row) |
+| `/work` | A shift of 3 quick tasks for free aura (see below) |
+| `/beg` | A random stranger gives you 0–40 aura, every 30 minutes |
 
 Duel games:
 
@@ -262,6 +264,13 @@ Duel games:
 | 🎲 Pure luck | 50/50 |
 
 If nobody wins (time runs out), both bets go back.
+
+Free aura without betting (no AI involved):
+
+- **`/work`**: a shift of 3 random tasks, each typed in the channel within 30 seconds: type a phrase ("i love shxbainu and this server"), unscramble a word, quick maths, count the emojis, type a word backwards, or remember a code that disappears after 3 seconds. 10–20 aura per task plus 15 for finishing; a wrong answer or running out of time ends the shift (you keep what you made). Your answers are deleted to keep the channel clean. 10 minutes between shifts, 5 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`).
+- **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts one of those tasks; the first right answer in 45 seconds wins 30–60.
+- **`/beg`**: usually 5–20, sometimes nothing, now and then 25–40.
+- **No copy-paste**: phrases and words are shown with invisible characters mixed in, so pasted text gives itself away, and typing faster than about 170 words a minute counts as pasting. Caught pasting in `/work` means no pay for that shift and no work for an hour; in a drop, a pasted answer just doesn't count. Shift answers and drop guesses skip moderation, so typing the same phrase isn't treated as spam.
 
 Shop (`/shop` to see it, `/buy` to spend):
 
@@ -403,6 +412,7 @@ python -m unittest -v
 - `storage.py`: SQLite history, offense counts and /shutup uses
 - `aura.py`, `casino.py`, `duels.py`, `shop.py`: aura, the casino, duels and the shop
 - `rep.py`: reputation with the bot
+- `work.py`: /work, aura drops and /beg
 - `predict.py`: the daily prediction
 - `news.py`: the Daily Aura
 - `dashboard.py`, `dashboard.html`: the web dashboard

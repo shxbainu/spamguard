@@ -34,7 +34,7 @@ LEVEL_POINTS = {
 DEBATE_POINTS = 100
 WHAT = {
     "comeback": "comeback", "callout": "called someone out", "called_out": "got called out",
-    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "daily": "daily", "nice": "was nice to the bot", "rude": "was rude to the bot", "gift": "gift", "shop": "shop",
+    "false_claim": "said something false", "bad_take": "had a terrible take", "debate": "won a debate", "daily": "daily", "work": "work", "drop": "won an aura drop", "beg": "begging", "nice": "was nice to the bot", "rude": "was rude to the bot", "gift": "gift", "shop": "shop",
 }
 # What the bot is reacting to, for the one-liner it writes; {size} is how big the moment was.
 SITUATIONS = {
@@ -220,7 +220,7 @@ aura_commands = app_commands.Group(name="aura", description="Aura points", guild
 
 LABELS = {
     "comeback": "Comeback", "callout": "Called someone out", "called_out": "Got called out",
-    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "daily": "Daily", "nice": "Nice to the bot", "rude": "Rude to the bot", "gift": "Gift", "shop": "Shop",
+    "false_claim": "False claim", "bad_take": "Bad take", "debate": "Won a debate", "daily": "Daily", "work": "Work", "drop": "Aura drop", "beg": "Begging", "nice": "Nice to the bot", "rude": "Rude to the bot", "gift": "Gift", "shop": "Shop",
 }
 
 

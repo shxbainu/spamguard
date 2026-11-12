@@ -335,9 +335,9 @@ async def blackjack_cmd(interaction: discord.Interaction, bet: str) -> None:
 
 
 CARD_NAMES = {1: "A", 11: "J", 12: "Q", 13: "K"}
-# Each right higher/lower guess multiplies the pot by this over the chance of being right: a 50/50 pays 1.7x, so two
-# in a row is about 2.9x, not 4x.
-HOUSE_EDGE = float(os.getenv("HIGHERLOWER_EDGE") or 0.85)
+# Each right higher/lower guess multiplies the pot by this over the chance of being right: a 50/50 pays 1.84x, so two
+# in a row is about 3.4x, and even a ~92% guess still pays at least 1x.
+HOUSE_EDGE = float(os.getenv("HIGHERLOWER_EDGE") or 0.92)
 
 
 def card_name(value: int) -> str:

@@ -484,5 +484,6 @@ class HigherLowerTuningTests(unittest.TestCase):
     def test_two_coin_flips_arent_4x(self):
         import casino
         step = casino.HOUSE_EDGE / casino.higher_lower_odds(7, "higher")
-        self.assertAlmostEqual(step, 1.7)
-        self.assertLess(step * step, 3.0)
+        self.assertAlmostEqual(step, 1.84)
+        self.assertLess(step * step, 3.5)
+        self.assertGreaterEqual(casino.HOUSE_EDGE / casino.higher_lower_odds(2, "higher"), 1.0, "safe guesses never shrink the pot")

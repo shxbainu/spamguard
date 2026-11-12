@@ -26,6 +26,7 @@ import news
 import predict
 import rep
 import shop
+import work
 from cards import LOSS, card
 from dashboard import start_dashboard
 from detectors import GifSpamDetector, MsgRef, PerMinuteBudget, RepeatDetector, StrikeTracker, looks_like_gif
@@ -234,6 +235,7 @@ class SpamGuard(discord.Client):
         self.grass = GrassWatcher(self)
         self.predictions = predict.Predictions(self)
         self.news = news.DailyNews(self)
+        self.work = work.Work(self)
         self.last_factcheck: dict[int, float] = {}  # user id -> monotonic time of their last fact-check
         self._shop_task: asyncio.Task | None = None
 
@@ -243,7 +245,7 @@ class SpamGuard(discord.Client):
         for command in (
             spamguard_commands, purge_cmd, shutup_cmd, settle_cmd, quote_menu, quote_commands, aura.aura_commands,
             debate.debate_commands, grass_cmd, factcheck.factcheck_menu, factcheck.factcheck_cmd,
-            *casino.COMMANDS, *duels.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
+            *casino.COMMANDS, *duels.COMMANDS, *work.COMMANDS, *predict.COMMANDS, *rep.COMMANDS, *shop.COMMANDS,
         ):
             self.tree.add_command(command)
         self.add_dynamic_items(predict.OutcomeButton)  # market buttons keep working after a restart
@@ -385,6 +387,8 @@ class SpamGuard(discord.Client):
             await debate.on_thread_message(running, message)  # debate threads have their own rules
             return
         self.predictions.count(message)
+        if self.work.busy(message):
+            return  # a /work answer or a drop guess: not chat, so no moderation and no reply
         text = message.clean_content
         is_gif = looks_like_gif(
             text,
@@ -405,6 +409,7 @@ class SpamGuard(discord.Client):
             self.spawn(self.chat_reply(message, rate=to_bot))
         elif to_bot and (bonus := self.react_to(message, text)):
             self.spawn(self.thank(message, bonus))
+        self.work.maybe_drop(message)
 
     async def moderate(self, message: discord.Message, text: str, is_gif: bool, context: list[tuple[str, str]]) -> None:
         channel_id = message.channel.id
