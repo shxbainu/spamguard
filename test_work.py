@@ -44,6 +44,25 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(work.check_answer(memory, " ".join(memory["answer"]), 5), "ok", "spaces between digits are fine")
         self.assertNotEqual(work.make_drop(random.Random(6))["kind"], "memory")
 
+    def test_new_tasks(self):
+        rng = random.Random(11)
+        missing = work.make_task("missing", rng)
+        numbers = [n.strip() for n in missing["prompt"].split("**")[1].split(",")]
+        self.assertIn("__", numbers)
+        odd = work.make_task("oddone", rng)
+        row = odd["prompt"].split("\n")[1]
+        self.assertEqual(len(set(row)), 2, "one lookalike in a row of the same emoji")
+        caps = work.make_task("capitals", rng)
+        shown = work.INVISIBLE_RE.sub("", caps["prompt"].split("**")[1])
+        self.assertEqual(caps["answer"], "".join(ch for ch in shown if ch.isupper()))
+        blanks = work.make_task("blanks", rng)
+        self.assertEqual(len(blanks["prompt"].split("**")[1]), len(blanks["answer"]))
+        sequence = work.make_task("sequence", rng)
+        self.assertIn("hidden", sequence)
+        self.assertEqual(work.check_answer(sequence, " ".join(reversed(sequence["answer"].split())), 5), "wrong", "order matters")
+        self.assertTrue(all(work.make_drop(random.Random(i))["kind"] not in work.PRIVATE_KINDS for i in range(100)))
+        self.assertGreaterEqual(len(work.TASK_KINDS), 8)
+
     def test_beg(self):
         results = [work.beg(random.Random(i)) for i in range(400)]
         nothing = sum(1 for amount, _ in results if amount == 0)

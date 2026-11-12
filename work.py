@@ -1,7 +1,8 @@
 """Free aura without betting, and without any AI:
 
-/work: a shift of four random mini-tasks (type a phrase like "i love shxbainu and this server", unscramble a word,
-quick maths, count emojis, type a word backwards, remember a code that disappears), paid only if every task is right.
+/work: a shift of four random mini-tasks out of twelve (type a phrase like "i love shxbainu and this server", unscramble a
+word, quick maths, count emojis, type a word backwards, remember a code or words in order before they disappear, find
+the missing number, spot the odd emoji, fill in the blanks, type only the capitals, count a letter), paid only if every task is right.
 A few shifts a day.
 
 /beg: a random stranger gives you a little aura (or walks past), every 30 minutes.
@@ -118,9 +119,13 @@ LONG_WORDS = [
     "volleyball", "skateboard", "microwave", "telescope", "butterfly", "lighthouse", "parachute", "basketball",
     "strawberry", "headphones", "cheeseburger", "grandmother", "playground", "watermelon", "snowboard", "detective",
 ]
-TASK_KINDS = ["type", "unscramble", "math", "count", "backwards", "memory"]
+TASK_KINDS = ["type", "unscramble", "math", "count", "backwards", "memory",
+              "sequence", "missing", "oddone", "blanks", "capitals", "letters"]
 TASK_NAMES = {"type": "Type it", "unscramble": "Unscramble", "math": "Quick maths", "count": "Count",
-              "backwards": "Backwards", "memory": "Memory"}
+              "backwards": "Backwards", "memory": "Memory", "sequence": "Remember the order", "missing": "Missing number",
+              "oddone": "Odd one out", "blanks": "Fill the blanks", "capitals": "Capitals only", "letters": "Letter count"}
+PRIVATE_KINDS = {"memory", "sequence"}  # they hide the prompt after a moment, so they can't be drops
+LOOKALIKES = [("🍎", "🍅"), ("😀", "😃"), ("🐶", "🐕"), ("🌑", "🌚"), ("🟥", "🟧"), ("💙", "💜"), ("🍊", "🍑")]
 
 
 def make_task(kind: str | None = None, rng: random.Random = random) -> dict:
@@ -144,6 +149,45 @@ def make_task(kind: str | None = None, rng: random.Random = random) -> dict:
     if kind == "backwards":
         word = rng.choice(LONG_WORDS)
         return {"kind": kind, "prompt": f"Type this backwards: **{disguise(word, rng)}**", "answer": word[::-1]}
+    if kind == "sequence":
+        words = rng.sample(WORDS, 5)
+        return {"kind": kind, "prompt": f"Remember these, in order: **{' '.join(words)}**",
+                "hidden": "Now type the 5 words in the same order.", "answer": " ".join(words), "show": 3}
+    if kind == "missing":
+        start, step, length = rng.randint(2, 30), rng.randint(3, 13), 6
+        if rng.random() < 0.3:
+            numbers = [start * 2 ** i for i in range(length)] if start < 10 else [3 * 2 ** i for i in range(length)]
+        else:
+            numbers = [start + step * i for i in range(length)]
+        gap = rng.randint(1, length - 2)
+        shown = ", ".join("__" if i == gap else str(n) for i, n in enumerate(numbers))
+        return {"kind": kind, "prompt": f"What's missing? **{shown}**", "answer": str(numbers[gap])}
+    if kind == "oddone":
+        same, odd = rng.choice(LOOKALIKES)
+        if rng.random() < 0.5:
+            same, odd = odd, same
+        row = [same] * rng.randint(10, 14)
+        spot = rng.randint(0, len(row) - 1)
+        row[spot] = odd
+        return {"kind": kind, "prompt": f"Which one is different? Type its position (1 is the first).\n{''.join(row)}",
+                "answer": str(spot + 1)}
+    if kind == "blanks":
+        word = rng.choice(LONG_WORDS)
+        shown = "".join("_" if ch in "aeiou" else ch for ch in word)
+        return {"kind": kind, "prompt": f"Fill the blanks: **{shown.upper()}**", "answer": word}
+    if kind == "capitals":
+        word = rng.choice(LONG_WORDS)
+        while True:
+            mixed = "".join(ch.upper() if rng.random() < 0.45 else ch for ch in word)
+            caps = "".join(ch for ch in mixed if ch.isupper())
+            if 3 <= len(caps) < len(word):
+                break
+        return {"kind": kind, "prompt": f"Type only the capital letters: **{disguise(mixed, rng)}**", "answer": caps}
+    if kind == "letters":
+        sentence = rng.choice(PHRASES)
+        letter = rng.choice([ch for ch in "aeinorst" if sentence.count(ch) >= 2] or ["e"])
+        return {"kind": kind, "prompt": f"How many **{letter.upper()}**s are in this?\n*{disguise(sentence, rng)}*",
+                "answer": str(sentence.count(letter))}
     code = "".join(rng.choice("0123456789") for _ in range(8))
     return {"kind": "memory", "prompt": f"Remember this code: **{' '.join(code)}**", "hidden": "Now type the code from memory.",
             "answer": code}
@@ -159,8 +203,8 @@ def check_answer(task: dict, typed: str, seconds: float) -> str:
 
 
 def make_drop(rng: random.Random = random) -> dict:
-    """A drop challenge (any task but memory, which needs a private message)."""
-    return make_task(rng.choice([k for k in TASK_KINDS if k != "memory"]), rng)
+    """A drop challenge (any task but the memory ones, which need a private message)."""
+    return make_task(rng.choice([k for k in TASK_KINDS if k not in PRIVATE_KINDS]), rng)
 
 
 BEGGARS = [
@@ -243,7 +287,7 @@ class Work:
                 else:
                     shown_message = await interaction.followup.send(text, ephemeral=True, wait=True)
                 if task.get("hidden"):
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(task.get("show", 2))
                     try:
                         await shown_message.edit(content=text.replace(task["prompt"], task["hidden"]))
                     except discord.HTTPException:
