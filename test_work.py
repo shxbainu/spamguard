@@ -174,7 +174,7 @@ class ShiftTests(unittest.TestCase):
         self.assertTrue(n * work.WORK_PAY[0] + work.WORK_BONUS <= total <= n * work.WORK_PAY[1] + work.WORK_BONUS, total)
         self.assertTrue(interaction.said("Shift done"))
         self.assertEqual(worker.workers, set())
-        self.assertIn("work again", worker.shift_problem(self.ben, __import__("time").time()), "cooldown")
+        self.assertIsNone(worker.shift_problem(self.ben, __import__("time").time()), "no wait before the next shift")
 
     def test_failing_a_button_task_means_no_pay(self):
         async def wrong(view):
@@ -189,6 +189,7 @@ class ShiftTests(unittest.TestCase):
         worker, interaction, deleted = self.run_shift(["type"] * 4, typed=[right, pasted])
         self.assertEqual(self.store.aura_total(1, 5), 500)
         self.assertTrue(interaction.said("Caught copy-pasting"))
+        self.assertIn("work again", worker.shift_problem(self.ben, __import__("time").time()), "an hour off for pasting")
         self.assertEqual(len(deleted), 2, "typed answers are deleted to keep the channel clean")
 
     def test_running_out_of_time_means_no_pay(self):

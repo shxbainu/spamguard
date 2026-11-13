@@ -2,7 +2,7 @@
 
 /work: a shift of four random tasks, mostly played with buttons and menus (find the odd emoji, whack-a-mole, Simon says,
 green light, memory pairs, pick all of a kind from a menu, tap a button an exact number of times) plus typing a phrase
-like "i love shxbainu and this server". Paid only if every task is passed. A few shifts a day.
+like "i love shxbainu and this server". Paid only if every task is passed. Up to a few shifts a day, back to back if you like.
 
 /beg: a random stranger gives you a little aura (or walks past), every 30 minutes.
 
@@ -36,7 +36,6 @@ load_dotenv()
 log = logging.getLogger("spamguard.work")
 
 WORK_SHIFTS_PER_DAY = int(os.getenv("WORK_SHIFTS_PER_DAY") or 3)
-WORK_COOLDOWN_MINUTES = int(os.getenv("WORK_COOLDOWN_MINUTES") or 20)
 WORK_PAY = (25, 35)          # per task, paid only if the whole shift is done (a shift is at least 120)
 WORK_BONUS = 20              # for a whole shift
 WORK_PHRASES = 4             # tasks in a shift
@@ -313,7 +312,8 @@ class Work:
                 done += 1
         finally:
             self.workers.discard(key)
-        self.end_shift(member, time.time(), CAUGHT_COOLDOWN_MINUTES if caught else WORK_COOLDOWN_MINUTES)
+        # No wait between shifts, just the daily limit (and an hour off for copy-pasting).
+        self.end_shift(member, time.time(), CAUGHT_COOLDOWN_MINUTES if caught else 0)
         if done == WORK_PHRASES:
             earned += WORK_BONUS
             self.store.add_aura(member.guild.id, member.id, member.display_name, earned, "work", f"did all {WORK_PHRASES} tasks")

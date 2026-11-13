@@ -277,7 +277,7 @@ Free aura without betting (no AI involved):
   - 👆 **Tap count**: press +1 exactly N times with the counter hidden, then Done.
   - ⌨️ **Type it**: type two phrases joined ("i love shxbainu and this server and …") in the channel within 35 s; copy-paste is caught and your message is deleted after.
 
-  A full shift pays 120–160. 20 minutes between shifts, 3 a day (`WORK_SHIFTS_PER_DAY`, `WORK_COOLDOWN_MINUTES`).
+  A full shift pays 120–160. No wait between shifts, but only 3 a day (`WORK_SHIFTS_PER_DAY`); the count resets at midnight.
 - **Aura drops**: when people are chatting in `DROP_CHANNEL_ID` (default: the chat channel), now and then (`DROP_CHANCE`, at most every `DROP_GAP_MINUTES`, 20) the bot posts a word or number puzzle (unscramble, quick maths, count emojis, backwards, missing number, odd one out, fill the blanks, capitals, letter count, or a typing race); the first right answer in 30 seconds wins 15–30.
 - **`/beg`**: once an hour; usually 2–10, a third of the time nothing, now and then 15–25.
 - **No copy-paste**: phrases and words are shown with invisible characters mixed in, so pasted text gives itself away, and typing faster than about 170 words a minute counts as pasting. Caught pasting in `/work` means no pay for that shift and no work for an hour; in a drop, a pasted answer just doesn't count. Shift answers and drop guesses skip moderation, so typing the same phrase isn't treated as spam.
