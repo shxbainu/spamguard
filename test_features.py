@@ -352,11 +352,45 @@ class CasinoTests(unittest.TestCase):
         self.assertIn("at least", parse_bet("0", 500))
 
     def test_slots(self):
-        from casino import slot_payout
-        self.assertEqual(slot_payout(["🍑", "🍑", "🍑"], 100), (2500, "**JACKPOT!**"))
-        self.assertEqual(slot_payout(["💎", "💎", "💎"], 100)[0], 1000)
-        self.assertEqual(slot_payout(["💎", "🍒", "💎"], 100)[0], 150)
-        self.assertEqual(slot_payout(["💎", "🍒", "🍋"], 100)[0], 0)
+        from casino import slot_payout, slot_return
+        self.assertEqual(slot_payout(["🍑", "🍑", "🍑"], 100)[0], 5000)
+        self.assertIn("JACKPOT", slot_payout(["🍑", "🍑", "🍑"], 100)[1])
+        self.assertEqual(slot_payout(["💎", "💎", "💎"], 100)[0], 1200)
+        self.assertEqual(slot_payout(["💎", "🍒", "💎"], 100)[0], 150, "a pair of 💎 is 1.5x")
+        self.assertEqual(slot_payout(["🍋", "🍋", "🔔"], 100)[0], 120, "every pair wins something")
+        self.assertEqual(slot_payout(["💎", "🍒", "🍋"], 100)[0], 30, "a lone cherry gives some back")
+        self.assertEqual(slot_payout(["💎", "🔔", "🍋"], 100)[0], 0)
+        odds = slot_return()
+        self.assertTrue(0.95 <= odds["rtp"] < 1.0, odds)
+        self.assertGreater(odds["profit"], 0.45, "about half the spins make money")
+        self.assertLess(odds["lose"], 0.25, "few lose everything")
+
+    def test_slots_animation(self):
+        import casino
+        store = temp_store()
+        member = SimpleNamespace(id=5, name="ben", display_name="ben", guild=SimpleNamespace(id=1),
+                                 display_avatar=SimpleNamespace(url="https://example.com/a.png"))
+        store.add_aura(1, 5, "ben", 1000, "gift", "x")
+        frames = []
+
+        async def send_message(embed=None, **kwargs):
+            frames.append(embed)
+
+        async def edit(embed=None, **kwargs):
+            frames.append(embed)
+        interaction = SimpleNamespace(client=SimpleNamespace(store=store), user=member, channel_id=1,
+                                      response=SimpleNamespace(send_message=send_message), edit_original_response=edit)
+        real_sleep = asyncio.sleep
+
+        async def quick(seconds):
+            await real_sleep(0)
+        with unittest.mock.patch.object(casino, "spin_reels", lambda: ["🍑", "🍑", "🍑"]), \
+                unittest.mock.patch.object(casino.asyncio, "sleep", quick):
+            asyncio.run(casino.slots_cmd.callback(interaction, "100"))
+        self.assertEqual(len(frames), casino.SPIN_FRAMES + 1, "reels stop one at a time, then the result")
+        self.assertIn("🌀", frames[0].description)
+        self.assertIn("JACKPOT", frames[-1].description)
+        self.assertEqual(store.aura_total(1, 5), 1000 + casino.START_AURA - 100 + 5000)
 
     def test_roulette(self):
         from casino import roulette_payout

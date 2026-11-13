@@ -3,6 +3,7 @@ more in chat, and can bet it on /coinflip, /slots, /roulette, /blackjack, /highe
 /give, or spend it in the /shop. Bets can be a number, "half" or "all" (also "1k", "2.5k")."""
 from __future__ import annotations
 
+import asyncio
 import os
 import random
 import time
@@ -120,22 +121,58 @@ async def coinflip_cmd(interaction: discord.Interaction, bet: str, call: Literal
     await interaction.response.send_message(embed=game_card(store, member, "🪙 Coin flip", body, amount, payout))
 
 
+# Weighted reels: common symbols come up often and pay a little, rare ones pay a lot. About half of spins win money,
+# only about 1 in 5 loses everything (a lone 🍒 gives some back), and the house keeps about 1%.
 SLOT_SYMBOLS = ["🍒", "🍋", "🔔", "💎", "7️⃣", "🍑"]
+SLOT_WEIGHTS = [26, 22, 18, 14, 12, 8]
+SLOT_THREE = {"🍒": 4, "🍋": 6, "🔔": 8, "💎": 12, "7️⃣": 20, "🍑": 50}
+SLOT_PAIR = {"🍒": 1.2, "🍋": 1.2, "🔔": 1.3, "💎": 1.5, "7️⃣": 2, "🍑": 2.5}
+SLOT_CHERRY = 0.3  # a single 🍒 with nothing else gives this much of the bet back
 JACKPOT = "🍑"
+SPIN_FRAMES = 3  # reels stop one at a time
+SPIN_DELAY = 0.7
+
+
+def spin_reels(rng: random.Random = random) -> list[str]:
+    return rng.choices(SLOT_SYMBOLS, weights=SLOT_WEIGHTS, k=3)
 
 
 def slot_payout(reels: list[str], bet: int) -> tuple[int, str]:
-    """(payout, what happened). Three 🍑 = 25x, any other three = 10x, a pair = 1.5x (about 97% paid back)."""
+    """(payout, what happened) for three reels."""
     counts = {symbol: reels.count(symbol) for symbol in reels}
-    best = max(counts.values())
-    if best == 3:
-        return (bet * 25, "**JACKPOT!**") if reels[0] == JACKPOT else (bet * 10, "**Three of a kind**")
-    if best == 2:
-        return bet * 3 // 2, "**Pair**"
+    best = max(counts, key=counts.get)
+    if counts[best] == 3:
+        if best == JACKPOT:
+            return bet * SLOT_THREE[best], f"**JACKPOT!** {SLOT_THREE[best]}x"
+        return bet * SLOT_THREE[best], f"**Three {best}** · {SLOT_THREE[best]}x"
+    if counts[best] == 2:
+        return int(bet * SLOT_PAIR[best]), f"**Pair of {best}** · {SLOT_PAIR[best]:g}x"
+    if "🍒" in reels:
+        return int(bet * SLOT_CHERRY), f"A lone 🍒 saves {SLOT_CHERRY:.0%}"
     return 0, "Nothing"
 
 
-@app_commands.command(name="slots", description="Spin the slots: pair 1.5x, three of a kind 10x, three 🍑 25x")
+def slot_return(weights=SLOT_WEIGHTS) -> dict[str, float]:
+    """The machine's long-run numbers, worked out exactly: share of the bets paid back ("rtp"), share of spins that
+    make money ("profit") and that lose everything ("lose")."""
+    from itertools import product
+    total = sum(weights)
+    rtp = profit = lose = 0.0
+    for reels in product(range(len(SLOT_SYMBOLS)), repeat=3):
+        chance = 1.0
+        for i in reels:
+            chance *= weights[i] / total
+        payout, _ = slot_payout([SLOT_SYMBOLS[i] for i in reels], 1000)
+        rtp += chance * payout / 1000
+        profit += chance * (payout > 1000)
+        lose += chance * (payout == 0)
+    return {"rtp": rtp, "profit": profit, "lose": lose}
+
+
+PAYTABLE = " · ".join(f"{s}{s}{s} {m}x" for s, m in reversed(SLOT_THREE.items())) + " · pairs 1.2–2.5x · lone 🍒 30% back"
+
+
+@app_commands.command(name="slots", description="Spin the slots: pairs pay, three of a kind 4-50x, three 🍑 is the jackpot")
 @app_commands.describe(bet="How much aura (a number, half or all)")
 @app_commands.guild_only()
 @game_cooldown
@@ -144,11 +181,31 @@ async def slots_cmd(interaction: discord.Interaction, bet: str) -> None:
     if amount is None:
         return
     store, member = interaction.client.store, interaction.user
-    reels = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
+    reels = spin_reels()
     payout, what = slot_payout(reels, amount)
-    pay(store, member, payout, "slots")
-    body = f"## {'  '.join(reels)}\n{what}"
-    await interaction.response.send_message(embed=game_card(store, member, "🎰 Slots", body, amount, payout))
+    pay(store, member, payout, "slots")  # paid before the animation, so nothing's lost if it gets cut off
+
+    def frame(stopped: int) -> discord.Embed:
+        shown = [reels[i] if i < stopped else random.choice(SLOT_SYMBOLS) for i in range(3)]
+        spinning = "".join("🛑" if i < stopped else "🌀" for i in range(3))
+        embed = card(member, "🎰 Slots", f"## {'  '.join(shown)}\n{spinning} spinning…", color=PLAYING)
+        embed.set_footer(text=PAYTABLE)
+        return embed
+
+    await interaction.response.send_message(embed=frame(0))
+    for stopped in range(1, SPIN_FRAMES):
+        await asyncio.sleep(SPIN_DELAY)
+        try:
+            await interaction.edit_original_response(embed=frame(stopped))
+        except discord.HTTPException:
+            break
+    await asyncio.sleep(SPIN_DELAY)
+    result = game_card(store, member, "🎰 Slots", f"## {'  '.join(reels)}\n{what}", amount, payout)
+    result.set_footer(text=PAYTABLE)
+    try:
+        await interaction.edit_original_response(embed=result)
+    except discord.HTTPException:
+        pass
 
 
 RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}

@@ -245,7 +245,7 @@ Aura is the currency. Everyone gets 500 the first time they use the casino (`CAS
 | Game | How it pays |
 |---|---|
 | `/coinflip bet call` | Call it right: 2x |
-| `/slots bet` | Pair 1.5x, three of a kind 10x, three 🍑 25x |
+| `/slots bet` | The reels spin and stop one at a time. Every pair pays (1.2x for 🍒/🍋 up to 2.5x for 🍑), three of a kind 4x–20x, three 🍑 is the 50x jackpot, and a lone 🍒 gives 30% back. Weighted reels: about half of spins make money, about 1 in 5 loses everything, and it pays back about 99% overall |
 | `/roulette bet on` | red/black/odd/even/low/high 2x; a number (0–36) or green 36x |
 | `/blackjack bet` | Hit, stand or double down; win 2x, blackjack 2.5x, tie gets your bet back |
 | `/higherlower bet` | Guess whether the next card is higher or lower; each right guess grows the pot by 0.92 ÷ the chance it was right (a 50/50 is 1.84x, two in a row about 3.4x; riskier guesses grow it more; `HIGHERLOWER_EDGE`), cash out any time, one wrong guess loses it |
